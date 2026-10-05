@@ -33,6 +33,8 @@ It does not create or claim work. It reports transport readiness, not live
 Codex or ChatGPT acceptance. Remote HTTP without TLS and redirects are rejected.
 There are no automatic mutation retries.
 
+For Codex Desktop on the execution host, the plugin compatibility config in `.mcp.json` targets `http://127.0.0.1:8240/mcp` and reads the bearer from `CODEX_X_MCP_TOKEN`. This reuses the already-running bridge instead of starting a second `mcp-stdio` owner against the same private config. Keep the token machine-local and out of plugin files. The portable `mcp.json` retains bundled stdio for standalone local hosts where no other bridge owns the config lock.
+
 ## HTTPS host
 
 Use an existing user-controlled domain/certificate and persistent host. Run the

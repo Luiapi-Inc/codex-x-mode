@@ -685,7 +685,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(listed["result"]["resultType"], "complete")
         self.assertEqual(listed["result"]["ttlMs"], 0)
         self.assertEqual(listed["result"]["cacheScope"], "private")
-        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.15")
+        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.16")
 
         mismatch = dict(request)
         mismatch["id"] = 5

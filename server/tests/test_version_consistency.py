@@ -16,7 +16,7 @@ class VersionConsistencyTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         manifest = json.loads((root / "plugin.json").read_text())
         version = manifest["version"]
-        self.assertEqual(version, "0.2.15")
+        self.assertEqual(version, "0.2.16")
         self.assertEqual(json.loads((root / ".codex-plugin/plugin.json").read_text())["version"], version)
         self.assertEqual(tomllib.loads((root / "server/pyproject.toml").read_text())["project"]["version"], version)
         self.assertEqual(SERVER_INFO["version"], version)
@@ -37,3 +37,13 @@ class VersionConsistencyTests(unittest.TestCase):
                     relative = path.relative_to(root / "server").as_posix()
                     self.assertEqual(bundle.extractfile(prefix + relative).read(), path.read_bytes(), relative)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in bundle.getnames()))
+
+    def test_codex_plugin_mcp_targets_live_loopback_bridge_without_embedded_secret(self):
+        root = Path(__file__).resolve().parents[2]
+        config = json.loads((root / ".mcp.json").read_text())
+        server = config["mcpServers"]["codex-x-mode"]
+        self.assertEqual(server["type"], "http")
+        self.assertEqual(server["url"], "http://127.0.0.1:8240/mcp")
+        self.assertEqual(server["bearer_token_env_var"], "CODEX_X_MCP_TOKEN")
+        self.assertNotIn("http_headers", server)
+        self.assertNotIn("env", server)

@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
 Date: 2026-10-05
-Status: Authoritative architecture checkpoint for v0.2.15
+Status: Authoritative architecture checkpoint for v0.2.16
 
 ## Required execution path
 
@@ -91,12 +91,14 @@ Mobile must not be marked verified until an actual ChatGPT Mobile smoke test com
 - v0.2.15 binds the existing Secure MCP Tunnel `tunnel_6ac183e0dc2881918df4195ad20fe4b3` to the ChatGPT developer-mode app whose listing URL ID is `plugin_asdk_app_6ac3bd2aa6208191b7bdd51602f548a2` and whose `.app.json` connector ID is `asdk_app_6ac3bd2aa6208191b7bdd51602f548a2`, while preserving the outer Codex X Mode plugin identity.
 - ChatGPT live discovery on that binding reports all 13 MCP tools (`Read 7` + `Write 6`).
 - v0.2.15 source/full suite: 95/95 PASS; deterministic runtime bundle SHA-256: `d158b2a379cc2e251a790c1104ce777478f0e0fe767c2bb9f634874f11c790a5`.
+- v0.2.16 configures Codex Desktop to reuse the live loopback HTTP MCP bridge through `.mcp.json` with `CODEX_X_MCP_TOKEN`, avoiding a second stdio owner and preserving fail-closed bearer authentication.
+- v0.2.16 full suite: 96/96 PASS; deterministic runtime bundle SHA-256: `d6a77deaaf51f6d68503e94e204cd0e65c9ab0fa3f7f829104b1405f7d1c6a06`.
 
 These prove package logic, the account-catalog leg, and that the headless route reaches the provider. They do not yet prove a successful full deployed Web or Mobile terminal task.
 
 ## Current state
 
-v0.2.15 endpoint binding is published on branch `feat/headless-web-route`: the ChatGPT developer-mode app is connected through the existing Secure MCP Tunnel, `.app.json` maps to `asdk_app_6ac3bd2aa6208191b7bdd51602f548a2`, all 13 tools are discovered, and the source/full suite is green. The existing outer private plugin `plugins_6ac10a6f500881918a222dd8b7693752` remains USER / PRIVATE and is now on release `pluginrel_6ac3c2e0b97c81918ed83f227b5986d8` at v0.2.15. `live_codex_verified` remains false until a real deployed terminal task succeeds with exact model identity and no reroute.
+v0.2.16 is the active source candidate on branch `feat/headless-web-route`: v0.2.15 is live on the Mac bridge and the existing outer private plugin remains USER / PRIVATE at its v0.2.15 release while the Codex-host MCP configuration change is validated and published. ChatGPT Web/Mobile continues through the verified Secure MCP Tunnel/App binding; Codex Desktop on the execution host reuses the loopback HTTP bridge via `.mcp.json` and `CODEX_X_MCP_TOKEN`. `live_codex_verified` remains false until a real deployed terminal task succeeds with exact model identity and no reroute.
 
 The previous v0.2.12 Native-Codex-only catalog assumption is superseded by the v0.2.13 package-registry + account-catalog design because raw Native Codex did not expose `chatgpt-web/*` aliases when the external route/browser helper was absent.
 
