@@ -16,7 +16,7 @@ class VersionConsistencyTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         manifest = json.loads((root / "plugin.json").read_text())
         version = manifest["version"]
-        self.assertEqual(version, "0.2.19")
+        self.assertEqual(version, "0.2.20")
         self.assertEqual(json.loads((root / ".codex-plugin/plugin.json").read_text())["version"], version)
         self.assertEqual(tomllib.loads((root / "server/pyproject.toml").read_text())["project"]["version"], version)
         self.assertEqual(SERVER_INFO["version"], version)
@@ -41,14 +41,28 @@ class VersionConsistencyTests(unittest.TestCase):
     def test_codex_plugin_mcp_targets_live_loopback_bridge_without_embedded_secret(self):
         root = Path(__file__).resolve().parents[2]
 
-        portable = json.loads((root / "mcp.json").read_text())["mcpServers"]["codex-x-mode"]
-        self.assertEqual(portable["type"], "streamable-http")
-        self.assertEqual(portable["url"], "http://127.0.0.1:8240/mcp")
-        self.assertNotIn("headers", portable)
+        portable_servers = json.loads((root / "mcp.json").read_text())["mcpServers"]
+        self.assertEqual(set(portable_servers), {"codex-x-mode", "codex-x-app"})
+        self.assertEqual(portable_servers["codex-x-mode"]["type"], "streamable-http")
+        self.assertEqual(portable_servers["codex-x-mode"]["url"], "http://127.0.0.1:8240/mcp")
+        self.assertEqual(portable_servers["codex-x-app"]["type"], "streamable-http")
+        self.assertEqual(portable_servers["codex-x-app"]["url"], "http://127.0.0.1:8240/codex-x-app/mcp")
+        for server in portable_servers.values():
+            self.assertNotIn("headers", server)
 
-        codex = json.loads((root / ".mcp.json").read_text())["mcpServers"]["codex-x-mode"]
-        self.assertEqual(codex["type"], "http")
-        self.assertEqual(codex["url"], portable["url"])
-        self.assertEqual(codex["bearer_token_env_var"], "CODEX_X_MCP_TOKEN")
-        self.assertNotIn("http_headers", codex)
-        self.assertNotIn("env", codex)
+        codex_servers = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+        self.assertEqual(set(codex_servers), {"codex-x-mode", "codex-x-app"})
+        for name, portable in portable_servers.items():
+            codex = codex_servers[name]
+            self.assertEqual(codex["type"], "http")
+            self.assertEqual(codex["url"], portable["url"])
+            self.assertEqual(codex["bearer_token_env_var"], "CODEX_X_MCP_TOKEN")
+            self.assertNotIn("http_headers", codex)
+            self.assertNotIn("env", codex)
+
+        skill = root / "skills/codex-x-app-tool/SKILL.md"
+        self.assertTrue(skill.is_file())
+        text = skill.read_text()
+        self.assertIn("name: codex-x-app-tool", text)
+        self.assertIn("codex-cli 0.160.1", text)
+        self.assertIn("Do not require or invoke the external `codex-app-tools@openai-bundled` package at runtime.", text)

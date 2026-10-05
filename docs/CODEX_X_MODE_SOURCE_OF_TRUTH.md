@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
 Date: 2026-10-05
-Status: Authoritative architecture checkpoint for v0.2.19
+Status: Authoritative architecture checkpoint for v0.2.20 candidate
 
 ## Required execution path
 
@@ -20,6 +20,24 @@ ChatGPT Web / Mobile
 Do not use Chromium, Playwright, DOM automation, a browser profile, browser daemon, or a second connector in the primary path.
 
 Do not route new Web-originated work through legacy `chatgpt_plan`. That backend exists only for reconciliation of persisted pre-v0.2.12 tasks.
+
+## HARD GUARDRAIL — Native Codex owns inference
+
+This rule supersedes the SIWC / Subscription Sharing inference experiments from v0.2.13–v0.2.19 and MUST NOT be relaxed unless the user explicitly changes the architecture.
+
+Native Codex owns authentication, account entitlement, model discovery, reasoning effort, `thread/start`, `turn/start`, terminal events, and model execution. Codex X Mode is the orchestrator/bridge only.
+
+The core execution path MUST NOT:
+
+- use SIWC / Subscription Sharing as the primary inference backend;
+- use a Codex-X-Mode-owned custom Responses provider as the primary model executor;
+- depend on `Subscription Sharing usage limit` for release acceptance or wait for that limit to reset;
+- derive core runtime entitlement from partner-app/SIWC `/v1/models`;
+- reintroduce Chromium, Playwright, `codex-chatgpt-web`, browser automation, or a second connector as the primary runtime path.
+
+The model surface MUST be derived from `package model policy ∩ models actually exposed by Native Codex for the signed-in account`. Public `chatgpt-web/*` aliases remain package-owned and map deterministically to exact Native Codex model IDs.
+
+Architecture PASS requires a new harmless Web-origin read-only task to run through Native-Codex-owned inference, complete successfully, show no reroute, and provide exact requested/selected/terminal model identity. SIWC/provider probes do not satisfy this gate.
 
 ## Headless-first runtime contract
 
@@ -68,6 +86,23 @@ Everything required by Codex X Mode must live in and ship from this repository, 
 Platform primitives explicitly required by the architecture are allowed: ChatGPT account authorization/catalog access, Native Codex app-server, and the secure transport/tunnel used to reach the user-owned bridge.
 
 Development/operator tools used to edit or inspect the repository are not runtime dependencies. Plugin Autopilot is development-only and must not be shipped as a Codex X Mode runtime dependency.
+
+## Codex X App tool contract
+
+Starting with v0.2.20, the package also owns a second MCP surface named `codex-x-app` and a bundled Skill named `codex-x-app-tool`. This surface is part of Codex X Mode itself; it MUST NOT require the proprietary/external `codex-app-tools@openai-bundled` package at runtime.
+
+The protocol baseline for this release is **Codex CLI 0.160.1**. `codex-x-app` adapts directly to the Native Codex app-server protocol through one lazy managed `codex app-server --stdio` process owned by the Codex X Mode runtime. It does not require the app-server daemon/proxy path and exposes only operations backed by the generated 0.160.1 protocol:
+
+- `list_threads`
+- `read_thread`
+- `create_thread`
+- `fork_thread`
+- `send_message_to_thread`
+- `set_thread_title`
+- `set_thread_archived`
+- `wait_threads`
+
+`automation_update`, `set_thread_pinned`, and `handoff_thread` are intentionally not exposed until a future Native Codex protocol supplies real primitives and regression coverage exists. The MCP endpoint is `/codex-x-app/mcp`; the existing Codex X Mode endpoint remains `/mcp`. Both surfaces reuse the same resident bridge and bearer-key boundary, so adding Codex X App does not require another browser, connector, or resident model runtime.
 
 ## Web and Mobile contract
 

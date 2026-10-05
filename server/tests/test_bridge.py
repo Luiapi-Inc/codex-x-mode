@@ -468,10 +468,11 @@ class DispatchDiagnosticsTests(unittest.TestCase):
         value = status(self.config, self.store)
         self.assertEqual(value["readiness"]["web_executor"], "implemented_unverified")
         self.assertEqual(value["execution_backends"]["local_stdio"], "codex_app_server")
-        self.assertEqual(value["execution_backends"]["web_http"], "chatgpt_web_headless")
+        self.assertEqual(value["execution_backends"]["web_http"], "codex_app_server")
         self.assertEqual(value["web_model_family"], "chatgpt-web")
         self.assertFalse(value["web_browser_required"])
-        self.assertEqual(value["chatgpt_web_authorization"]["state"], "authorization_required")
+        self.assertTrue(value["native_codex_owns_inference"])
+        self.assertEqual(value["chatgpt_web_authorization"]["state"], "native_codex_owned")
         self.assertFalse(value["live_codex_verified"])
 
 
@@ -568,12 +569,10 @@ class HTTPTests(unittest.TestCase):
                        "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
                        "chatgpt_web_default_model": "chatgpt-web/5.6-sol",
                        "backend_timeout_seconds": 2}
-        from tests.test_siwc import credentials
-        from tests.test_siwc_dispatch import ACCOUNT_CATALOG
-        auth = patch("bridge.siwc.get_credentials", return_value=credentials("fixture-host"))
-        catalog = patch("bridge.siwc.list_models", return_value=ACCOUNT_CATALOG)
-        auth.start(); catalog.start()
-        self.addCleanup(auth.stop); self.addCleanup(catalog.stop)
+        from tests.test_siwc_dispatch import NATIVE_CATALOG
+        catalog = patch("bridge.service.codex_list_models", return_value=NATIVE_CATALOG)
+        catalog.start()
+        self.addCleanup(catalog.stop)
         self.server = Server(("127.0.0.1", 0), self.config, self.store, start_worker=False)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -627,7 +626,7 @@ class HTTPTests(unittest.TestCase):
 
     def test_web_catalog_unavailable_blocks_dispatch_but_preserves_project_reads(self):
         body = {"project_id": "demo", "prompt": "review", "scope": "read-only", "request_key": "no-catalog"}
-        with patch("bridge.siwc.list_models", side_effect=OSError("fixture catalog unavailable")):
+        with patch("bridge.service.codex_list_models", side_effect=OSError("fixture native catalog unavailable")):
             self.assertEqual(self.request("GET", "/models")[0], 503)
             self.assertEqual(self.request("POST", "/tasks", body)[0], 503)
             self.assertEqual(self.request("GET", "/projects/demo/file?path=hello.txt")[0], 200)
@@ -685,7 +684,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(listed["result"]["resultType"], "complete")
         self.assertEqual(listed["result"]["ttlMs"], 0)
         self.assertEqual(listed["result"]["cacheScope"], "private")
-        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.19")
+        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.20")
 
         mismatch = dict(request)
         mismatch["id"] = 5

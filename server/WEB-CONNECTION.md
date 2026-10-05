@@ -73,13 +73,7 @@ task against real Codex, capture its task ID/result/command outcomes, and verify
 backend claim/context/complete using a real issued turn. A completed reasoning
 turn with a failed captured command is not a passing command test.
 
-`GET /models` and HTTP `codex_x_list_models` expose the signed-in account's
-token-scoped model catalog. Web dispatch uses SIWC and the public Responses
-provider; local stdio keeps the app-server catalog/provider. Neither changes
-the current ChatGPT conversation model or establishes plan entitlement.
-The exact selection is sent to thread/turn start. Missing/mismatched terminal
-model identity or reroutes leave execution `unknown` without replay.
-See [SIWC.md](SIWC.md); real authorization and inference remain unverified.
+`GET /models` and HTTP `codex_x_list_models` expose package-supported aliases mapped onto Native Codex `model/list`. Web and local dispatch both execute through Native Codex app-server; Native Codex owns authentication, reasoning metadata, and inference. This does not change the current ChatGPT conversation model. The exact underlying model is sent to thread/turn start. Missing/mismatched terminal model identity or reroutes leave execution `unknown` without replay. SIWC/custom Responses-provider routing is legacy-recovery only; see [SIWC.md](SIWC.md).
 
 For a Custom GPT Actions connection, generate the actual-host schema:
 

@@ -32,12 +32,10 @@ class ClientIntegrationTests(unittest.TestCase):
             "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
             "chatgpt_web_default_model": "chatgpt-web/5.6-sol",
             "task_timeout_seconds": 5}
-        from tests.test_siwc import credentials
-        from tests.test_siwc_dispatch import ACCOUNT_CATALOG
-        auth = patch("bridge.siwc.get_credentials", return_value=credentials("fixture-host"))
-        catalog = patch("bridge.siwc.list_models", return_value=ACCOUNT_CATALOG)
-        auth.start(); catalog.start()
-        self.addCleanup(auth.stop); self.addCleanup(catalog.stop)
+        from tests.test_siwc_dispatch import NATIVE_CATALOG
+        catalog = patch("bridge.service.codex_list_models", return_value=NATIVE_CATALOG)
+        catalog.start()
+        self.addCleanup(catalog.stop)
         self.config_path = self.root / "private.json"
         self.config_path.write_text(json.dumps(self.config))
         self.config_path.chmod(0o600)

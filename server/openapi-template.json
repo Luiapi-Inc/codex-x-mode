@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Codex X Mode Bridge",
-    "version": "0.2.19"
+    "version": "0.2.20"
   },
   "servers": [
     {
@@ -53,7 +53,7 @@
     "/models": {
       "get": {
         "operationId": "listModels",
-        "summary": "Read token-scoped listed ChatGPT-plan models for web dispatch; SIWC authorization is required. Listing does not prove inference entitlement or change the current ChatGPT conversation model.",
+        "summary": "Read package-filtered Native Codex models for Web dispatch. Native Codex owns authentication and inference; listing does not prove terminal inference or change the current ChatGPT conversation model.",
         "x-openai-isConsequential": false,
         "responses": {
           "200": {

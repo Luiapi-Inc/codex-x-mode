@@ -4,6 +4,10 @@
     "codex-x-mode": {
       "type": "streamable-http",
       "url": "http://127.0.0.1:8240/mcp"
+    },
+    "codex-x-app": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:8240/codex-x-app/mcp"
     }
   }
 }

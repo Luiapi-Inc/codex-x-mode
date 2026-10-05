@@ -1,9 +1,6 @@
-# ChatGPT-plan dispatch in v0.2.8
+# Legacy SIWC / Subscription Sharing support
 
-HTTP Actions and HTTP MCP dispatch use ChatGPT-plan inference. Local stdio
-dispatch keeps Codex app-server's existing account/provider. Backend selection
-is internal; a caller-supplied backend field is rejected. The backend-turn
-relay remains separate and never recursively dispatches itself.
+SIWC is **not** the primary inference path from v0.2.20 onward. New HTTP/Web and local dispatch both execute through Native Codex app-server, which owns ChatGPT authentication, model discovery, and inference. This module remains only for reconciliation of persisted legacy tasks and optional operator tooling. A caller-supplied backend is still rejected, and new work must never select `chatgpt_plan` or `chatgpt_web_headless`.
 
 ## Operator commands
 

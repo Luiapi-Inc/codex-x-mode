@@ -39,6 +39,7 @@ def main():
     serve = commands.add_parser("serve")
     serve.add_argument("--port", type=int, default=8240)
     commands.add_parser("mcp-stdio")
+    commands.add_parser("codex-x-app-mcp-stdio")
     export = commands.add_parser("schema")
     export.add_argument("--url", required=True)
     export.add_argument("--output", default="openapi.json")
@@ -118,23 +119,13 @@ def main():
         print(path)
         return
     if args.command == "codex":
-        env = dict(os.environ, CODEX_BRIDGE_PROVIDER_KEY=config["provider_key"])
+        # Native Codex owns authentication, catalog selection, and inference.
+        # This wrapper must never turn Codex X Mode into a custom Responses provider.
         extra = args.args[1:] if args.args[:1] == ["--"] else args.args
-        try:
-            catalog_path = write_codex_catalog(config)
-        except (CodexCatalogError, OSError) as exc:
-            parser.error(str(exc))
-        command = config["codex_command"] + [
-            "-c", 'model_provider="custom_gpt_bridge"',
-            "-c", "model_catalog_json=" + json.dumps(str(catalog_path)),
-            "-c", 'model_providers.custom_gpt_bridge.name="Codex X Mode"',
-            "-c", 'model_providers.custom_gpt_bridge.wire_api="responses"',
-            "-c", f'model_providers.custom_gpt_bridge.base_url="http://127.0.0.1:{args.port}/v1"',
-            "-c", 'model_providers.custom_gpt_bridge.env_key="CODEX_BRIDGE_PROVIDER_KEY"',
-            "-c", 'model_providers.custom_gpt_bridge.supports_websockets=false',
-            "-c", 'model_providers.custom_gpt_bridge.request_max_retries=0',
-            "-c", 'model_providers.custom_gpt_bridge.stream_max_retries=0',
-            *extra]
+        command = config["codex_command"] + ["-c", 'model_provider="openai"', *extra]
+        env = dict(os.environ)
+        for key in ("CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN", "OPENAI_BASE_URL"):
+            env.pop(key, None)
         raise SystemExit(subprocess.call(command, env=env))
     lock_file = config_path.with_suffix(".lock").open("a")
     try:
@@ -142,7 +133,14 @@ def main():
     except BlockingIOError:
         parser.error("This configuration already has a running bridge")
     store = Store(config_path.with_suffix(".sqlite3"))
-    if args.command == "mcp-stdio":
+    if args.command in ("mcp-stdio", "codex-x-app-mcp-stdio"):
+        if args.command == "codex-x-app-mcp-stdio":
+            try:
+                serve_stdio(config, store, surface="codex_x_app")
+            finally:
+                store.close()
+                lock_file.close()
+            return
         stop = threading.Event()
         thread = threading.Thread(target=worker, args=(config, store, stop), daemon=True)
         thread.start()

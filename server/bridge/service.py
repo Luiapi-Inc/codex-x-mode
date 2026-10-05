@@ -5,7 +5,7 @@ import secrets
 import stat
 from pathlib import Path
 
-from .codex import list_models as codex_list_models
+from .codex import ModelSelectionError, list_models as codex_list_models
 from .core import Fault, encoded, fields, project_config, text
 from . import siwc
 
@@ -47,31 +47,28 @@ def public_job(job):
 
 def status(config, store):
     unknown = store.unknown_projects()
-    try:
-        authorization = siwc.authorization_status(config)
-    except (siwc.SiwcError, OSError):
-        authorization = {"state": "authorization_required"}
     return {
         "status": "up",
-        "version": "0.2.19",
+        "version": "0.2.20",
         "live_codex_verified": False,
         "projects": len(config.get("projects", {})),
         "unknown_projects": unknown,
         "unknown_tasks": store.unknown_tasks() if hasattr(store, "unknown_tasks") else [],
         "readiness": {
             "mcp_transport": "available",
-            "codex_runtime": "unverified",
+            "codex_runtime": "implemented_unverified",
             "web_executor": "implemented_unverified",
             "model_identity": "unverified",
             "end_to_end": "unverified",
         },
         "execution_backends": {
             "local_stdio": "codex_app_server",
-            "web_http": "chatgpt_web_headless",
+            "web_http": "codex_app_server",
         },
         "web_model_family": "chatgpt-web",
         "web_browser_required": False,
-        "chatgpt_web_authorization": authorization,
+        "native_codex_owns_inference": True,
+        "chatgpt_web_authorization": {"state": "native_codex_owned"},
         "capabilities": {
             "backend": ["claim", "context", "complete", "cancel"],
             "dispatch": ["models", "create", "read", "continue", "cancel"],
@@ -93,18 +90,17 @@ def list_projects(config):
 def list_models(config):
     if _origin(config) == "web":
         try:
-            credentials = siwc.get_credentials(config)
-            catalog = siwc.list_models(config, credentials=credentials)
-        except (siwc.SiwcError, OSError) as exc:
-            raise Fault(503, str(exc) if isinstance(exc, siwc.SiwcError) else "ChatGPT Web authorization is unavailable") from None
+            catalog = codex_list_models(config, native_isolated=True)
+        except (ModelSelectionError, OSError, RuntimeError) as exc:
+            raise Fault(503, "Native Codex model catalog is unavailable") from exc
         by_id = {item.get("id"): item for item in catalog.get("models", []) if isinstance(item, dict)}
         routes = _web_model_routes()
-        models = []
         configured_default = config.get("chatgpt_web_default_model")
         available_aliases = [alias for alias, route in routes.items() if route["slug"] in by_id]
         resolved_default = configured_default if configured_default in available_aliases else None
         if resolved_default is None and available_aliases:
             resolved_default = max(available_aliases, key=lambda alias: routes[alias]["priority"])
+        models = []
         for alias, route in routes.items():
             slug = route["slug"]
             item = by_id.get(slug)
@@ -115,13 +111,15 @@ def list_models(config):
                 "model": slug,
                 "display_name": item.get("display_name", route["display_name"]),
                 "is_default": alias == resolved_default,
-                "supported_reasoning_efforts": [],
+                "default_reasoning_effort": item.get("default_reasoning_effort"),
+                "supported_reasoning_efforts": list(item.get("supported_reasoning_efforts", [])),
             })
         return {
-            "backend": "chatgpt_web_headless",
-            "catalog_source": "responses_api_models",
+            "backend": "codex_app_server",
+            "catalog_source": "model/list",
             "catalog_integrity_verified": True,
             "model_entitlement_verified": False,
+            "native_codex_owns_inference": True,
             "route_prefix": "chatgpt-web/",
             "supported_models": list(routes),
             "resolved_default_model": resolved_default,
@@ -134,21 +132,22 @@ def _origin(config):
     return "web" if config.get("_dispatch_origin") == "web" else "local"
 
 def _backend(config):
-    return "chatgpt_web_headless" if _origin(config) == "web" else "codex_app_server"
+    # All new dispatch, including Web-origin work, executes through Native Codex.
+    # Legacy custom-provider backends remain only on already-persisted tasks.
+    return "codex_app_server"
 
 
-def _web_model_snapshot(config, requested, *, credentials=None):
+def _web_model_snapshot(config, requested):
     try:
-        credentials = credentials if credentials is not None else siwc.get_credentials(config)
-        catalog = siwc.list_models(config, credentials=credentials)
-    except (siwc.SiwcError, OSError) as exc:
-        raise Fault(503, str(exc) if isinstance(exc, siwc.SiwcError) else "ChatGPT Web authorization is unavailable") from None
+        catalog = codex_list_models(config, native_isolated=True)
+    except (ModelSelectionError, OSError, RuntimeError) as exc:
+        raise Fault(503, "Native Codex model catalog is unavailable") from exc
 
     routes = _web_model_routes()
     by_id = {item.get("id"): item for item in catalog.get("models", []) if isinstance(item, dict)}
     available_aliases = [alias for alias, route in routes.items() if route["slug"] in by_id]
     if not available_aliases:
-        raise Fault(400, "Authorized ChatGPT account has no package-supported Web model")
+        raise Fault(400, "Native Codex account has no package-supported Web model")
 
     selected_id = requested
     source = "requested"
@@ -159,21 +158,25 @@ def _web_model_snapshot(config, requested, *, credentials=None):
             source = "configured_default"
         else:
             selected_id = max(available_aliases, key=lambda alias: routes[alias]["priority"])
-            source = "entitlement_fallback"
+            source = "native_catalog_fallback"
 
     route = routes.get(selected_id)
     if route is None:
         raise Fault(400, "Unsupported Web model; allowed: " + ", ".join(routes))
     slug = route["slug"]
-    matches = [item for item in catalog.get("models", []) if item.get("id") == slug]
-    if len(matches) != 1:
-        raise Fault(400, "Requested Web model is unavailable to the authorized ChatGPT account")
-    selected = dict(matches[0])
-    selected["id"] = selected_id
-    selected["model"] = slug
-    selected["source"] = source
-    selected["reasoning_effort"] = config.get("chatgpt_web_reasoning_effort")
-    return selected
+    native = by_id.get(slug)
+    if native is None:
+        raise Fault(400, "Requested Web model is unavailable to Native Codex")
+    return {
+        "id": selected_id,
+        "model": slug,
+        "display_name": native.get("display_name", route["display_name"]),
+        "source": source,
+        "reasoning_effort": config.get("chatgpt_web_reasoning_effort"),
+        "default_reasoning_effort": native.get("default_reasoning_effort"),
+        "supported_reasoning_efforts": list(native.get("supported_reasoning_efforts", [])),
+        "catalog_source": "model/list",
+    }
 
 
 def _retry_task(store, request_key, payload):
@@ -198,21 +201,14 @@ def _accept_task(config, store, payload, request_key):
         raise Fault(409, "Follow-up cannot change the parent dispatch origin")
     payload["dispatch_origin"] = current_origin
     payload["execution_backend"] = _backend(config)
-    # Serialize acceptance around model/account selection so concurrent duplicates
-    # never observe different snapshots or create two jobs.
+    # Serialize acceptance around Native Codex model selection so concurrent
+    # duplicates never observe different snapshots or create two jobs.
     with store.lock:
         prior = _retry_task(store, request_key, payload)
         if prior is not None:
             return prior
         if current_origin == "web":
-            try:
-                credentials = siwc.get_credentials(config)
-            except (siwc.SiwcError, OSError) as exc:
-                raise Fault(503, str(exc) if isinstance(exc, siwc.SiwcError) else "ChatGPT Web authorization is unavailable") from None
-            payload["siwc_registration"] = siwc.registration(credentials)
-            payload["selected_model"] = _web_model_snapshot(
-                config, payload.get("model_version"), credentials=credentials
-            )
+            payload["selected_model"] = _web_model_snapshot(config, payload.get("model_version"))
         return public_job(store.create("task", payload, request_key))
 
 

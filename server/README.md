@@ -27,19 +27,19 @@ Default config path is `~/.config/codex-x-mode/bridge-private.json` with mode 60
 
 ```bash
 python3 -m bridge mcp-stdio
+python3 -m bridge codex-x-app-mcp-stdio
 ```
 
-The root `mcp.json` invokes this bundled server in local-capable hosts. Exposed tools are the 13 `codex_x_*` operations for status, model catalog, project reads, task lifecycle, and backend turn lifecycle. Resources: `codex-x://status`, `codex-x://projects`. Prompts: `codex-x-backend`, `codex-x-dispatch-read-only`.
+The root `mcp.json` exposes two bundled MCP surfaces from this same runtime. `codex-x-mode` provides the 13 `codex_x_*` operations for status, model catalog, project reads, task lifecycle, and backend turn lifecycle; resources are `codex-x://status` and `codex-x://projects`, with prompts `codex-x-backend` and `codex-x-dispatch-read-only`. `codex-x-app` is a separate native-backed thread orchestration surface at `/codex-x-app/mcp` with 8 tools: list/read/create/fork threads, send/steer messages, set title/archive state, and wait for threads. Its protocol baseline is Codex CLI 0.160.1 and it does not depend on the external `codex-app-tools@openai-bundled` package.
 
 Stdio supports MCP `2026-07-28` and legacy handshake revisions `2025-11-25`, `2025-06-18`, and `2025-03-26` for compatibility.
 
 ## HTTP MCP / Actions
 
-HTTP-origin dispatch requires SIWC authorization and an explicit exact model
-or a configured exact default. Local stdio keeps its existing provider.
-Run `python3 -m bridge siwc-login` on the computer running the browser, then
-`python3 -m bridge siwc-status`. See [SIWC.md](SIWC.md) for protected VM import,
-backend/account binding, CLI commands and live verification limits.
+HTTP-origin and local dispatch both execute through Native Codex app-server.
+Web aliases are package policy mapped onto Native Codex `model/list`; Native Codex owns
+authentication and inference. SIWC commands remain only for legacy persisted-task
+reconciliation/optional tooling and are not required for new dispatch. See [SIWC.md](SIWC.md).
 
 ```bash
 python3 -m bridge serve
@@ -67,7 +67,8 @@ for this bridge's JSON/stdio surfaces, not a general SSE/subscription SDK.
 See [WEB-CONNECTION.md](WEB-CONNECTION.md) for deployment and separate host,
 authentication and mobile acceptance gates.
 
-- `POST /mcp` — modern MCP `2026-07-28`, Bearer `mcp_key`
+- `POST /mcp` — Codex X Mode MCP `2026-07-28`, Bearer `mcp_key`
+- `POST /codex-x-app/mcp` — Codex X App MCP, Bearer `mcp_key`
 - Actions routes (`/status`, `/projects`, project reads, `/tasks...`, `/backend...`) — Bearer `gpt_key`
 - `/v1/...` — private Responses provider, Bearer `provider_key`
 
@@ -75,14 +76,14 @@ For web/mobile, reverse-proxy only intended MCP/Actions routes over HTTPS. Keep 
 
 ## Backend flow
 
-Run a Codex process through the local provider wrapper while the bridge is active. The wrapper regenerates a Codex-native model catalog from the installed Codex bundled metadata, rewrites only the packaged aliases, and points the process at the existing private Responses provider:
+Run Codex with Native Codex authentication/provider ownership. The wrapper no longer points Codex back at the bridge Responses provider:
 
 ```bash
 python3 -m bridge codex-catalog
 python3 -m bridge codex -- --sandbox read-only
 ```
 
-The default generated catalog is `~/.local/share/codex-x-mode/codex-models.json` with mode 600. For Codex Desktop, user-level `config.toml` must select `custom_gpt_bridge` and this catalog at startup; the provider secret stays in `CODEX_BRIDGE_PROVIDER_KEY` and is never written into the catalog or repository. A full Desktop restart is required after changing startup catalog/provider configuration.
+The `codex-catalog` command remains a compatibility/model-picker utility only. New inference must not select `custom_gpt_bridge`, must not depend on `CODEX_BRIDGE_PROVIDER_KEY`, and must not call the bridge `/v1` surface as its model provider. Native Codex account/provider state is authoritative.
 
 Backend handling:
 

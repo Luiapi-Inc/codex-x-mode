@@ -4,6 +4,11 @@
       "type": "http",
       "url": "http://127.0.0.1:8240/mcp",
       "bearer_token_env_var": "CODEX_X_MCP_TOKEN"
+    },
+    "codex-x-app": {
+      "type": "http",
+      "url": "http://127.0.0.1:8240/codex-x-app/mcp",
+      "bearer_token_env_var": "CODEX_X_MCP_TOKEN"
     }
   }
 }

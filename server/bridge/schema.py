@@ -28,7 +28,7 @@ def schema(base_url):
     project_param = {"name": "project_id", "in": "path", "required": True, "schema": string}
     add("/status", "get", "getStatus", "Read bridge capability and recovery status.")
     add("/projects", "get", "listProjects", "List configured projects and whether writes are allowed.")
-    add("/models", "get", "listModels", "Read token-scoped listed ChatGPT-plan models for web dispatch; SIWC authorization is required. Listing does not prove inference entitlement or change the current ChatGPT conversation model.")
+    add("/models", "get", "listModels", "Read package-filtered Native Codex models for Web dispatch. Native Codex owns authentication and inference; listing does not prove terminal inference or change the current ChatGPT conversation model.")
     add("/projects/{project_id}/directory", "get", "listProjectDirectory", "List a directory inside an allowlisted project without escaping its root.",
         params=[project_param,
                 {"name": "path", "in": "query", "required": False, "schema": {"type": "string", "default": "."}},
@@ -59,7 +59,7 @@ def schema(base_url):
                                                    "model_version": {"type": "string", "description": "Optional exact packaged chatgpt-web alias returned by GET /models; omission retains the parent's selected model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."}}), [job_param], True, success=202)
     add("/tasks/{id}/cancel", "post", "cancelCodexTask", "Cancel a queued task or request cancellation of a running task. Unknown execution remains fail-closed.",
         body_schema(["request_key"], {"request_key": string}), [job_param], True)
-    return {"openapi": "3.1.0", "info": {"title": "Codex X Mode Bridge", "version": "0.2.19"},
+    return {"openapi": "3.1.0", "info": {"title": "Codex X Mode Bridge", "version": "0.2.20"},
             "servers": [{"url": base_url.rstrip("/")}], "paths": paths,
             "security": [{"bearerAuth": []}],
             "components": {"securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}}}

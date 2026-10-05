@@ -1,6 +1,6 @@
 # Codex X Mode
 
-v0.2.19 keeps Web-origin dispatch headless and package-aware, isolates each Web app-server from user-level Codex picker configuration with an ephemeral CODEX_HOME, binds Web/Mobile through the verified Secure MCP Tunnel developer app, and retains sanitized terminal provider-error diagnostics for failed turns without weakening fail-closed model verification. Web model exposure is now the intersection of the packaged registry and the authorized ChatGPT account catalog. The packaged aliases currently include `chatgpt-web/5.5`, `chatgpt-web/5.6-luna`, and `chatgpt-web/5.6-sol`; models outside the packaged policy stay hidden even if the account can see them. A generic `chatgpt-web` request uses the configured default when that alias is entitled, otherwise it falls back to the highest-priority entitled packaged model. New Web tasks use the `chatgpt_web_headless` backend with Native Codex app-server execution and no Chromium, Playwright, browser profile, browser daemon, or second connector. Legacy `chatgpt_plan` handling remains only for persisted pre-v0.2.12 recovery. Exact terminal model identity remains fail-closed when absent or rerouted.
+v0.2.20 restores the intended execution boundary: Codex X Mode is an orchestrator/bridge, while Native Codex owns ChatGPT authentication, `model/list`, reasoning metadata, `thread/start`, `turn/start`, inference, and terminal model identity. Web model exposure is the packaged registry intersected with Native Codex models for the signed-in account. The packaged aliases currently include `chatgpt-web/5.5`, `chatgpt-web/5.6-luna`, and `chatgpt-web/5.6-sol`; models outside package policy stay hidden. New Web and local tasks both use `codex_app_server`; SIWC/Subscription Sharing and custom Responses-provider routing are legacy-recovery only. The primary route remains headless with no Chromium, Playwright, browser profile, browser daemon, `codex-chatgpt-web`, or second connector. Exact terminal model identity remains fail-closed when absent or rerouted.
 
 Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP tools + bridge runtime** ไว้ใน package เดียว ไม่ต้องพึ่ง plugin หรือ skill อื่นเพื่อทำ Backend/Dispatch workflow หลัก
 
@@ -9,7 +9,7 @@ Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP
 | Backend | รับ model turn ที่ Codex local provider รอคำตอบอยู่ | `codex_x_claim_backend_turn` → `codex_x_read_backend_context` → `codex_x_complete_backend_turn` / `codex_x_cancel_backend_turn` |
 | Dispatch | ส่งงานที่ผู้ใช้อนุญาตให้ Codex ทำใน project allowlist | `codex_x_create_task` → `codex_x_read_task` → `codex_x_continue_task` / `codex_x_cancel_task` |
 
-มีทั้งหมด 13 tools พร้อม 2 resources และ 2 prompts. Local stdio อ่าน model catalog จาก Native Codex app-server ตามปกติ ส่วน Web surface ใช้ packaged Web-model registry ตัดกับ catalog ของบัญชี ChatGPT ที่ authorize ผ่าน SIWC เพื่อ expose เฉพาะ alias ที่ package รองรับและบัญชีมีสิทธิ์. Package รุ่นถัดไปสามารถเพิ่ม model ใหม่ เช่น Pro ผ่าน registry โดยไม่แก้ routing core. Catalog visibility ยังไม่ใช่ inference proof; `inference_verified` ต้องมี completed turn และ terminal model identity ตรงกันโดยไม่มี reroute
+มีทั้งหมด 13 tools พร้อม 2 resources และ 2 prompts. ทั้ง Web และ local dispatch อ่าน model catalog จาก Native Codex app-server; Web surface ใช้ packaged Web-model registry ตัดกับ Native Codex `model/list` เพื่อ expose เฉพาะ alias ที่ package รองรับและบัญชี Native Codex มองเห็น. Package รุ่นถัดไปสามารถเพิ่ม model ใหม่ เช่น Pro ผ่าน registry โดยไม่แก้ routing core. Catalog visibility ยังไม่ใช่ inference proof; `inference_verified` ต้องมี completed turn และ terminal model identity ตรงกันโดยไม่มี reroute
 
 Web dispatch ผ่าน fixture/package validation แล้ว แต่ยังไม่ผ่าน clean-install self-contained acceptance หรือ real Web → Bridge → Native Codex → ChatGPT Web terminal verification. สถานะจึงยังใช้ `web_executor: implemented_unverified` และ `live_codex_verified=false`. การเลือก model ใน bridge ไม่เปลี่ยน model ของบทสนทนา ChatGPT และการอัปโหลด plugin ไม่ deploy bridge
 
@@ -21,7 +21,7 @@ publication; mobile availability requires verification in the actual host.
 
 ## Local setup
 
-Plugin มี authoritative portable `mcp.json` ที่ประกาศ Streamable HTTP ไปยัง `http://127.0.0.1:8240/mcp` โดยไม่ฝัง credential และมี Codex compatibility config ใน `.mcp.json` ที่อ้าง `CODEX_X_MCP_TOKEN` เป็น `bearer_token_env_var`. User-level Codex configuration เป็นผู้จัดการ bearer credential ให้ identity/URL เดียวกัน. รูปแบบนี้ reuse Secure Tunnel bridge ที่กำลังฟังบน Mac แทนการ spawn stdio bridge ตัวที่สองซึ่งจะชน single-runtime lock.
+Plugin มี authoritative portable `mcp.json` ที่ประกาศ MCP สอง surface จาก runtime เดียวกัน: `codex-x-mode` ที่ `http://127.0.0.1:8240/mcp` และ `codex-x-app` ที่ `http://127.0.0.1:8240/codex-x-app/mcp`. ทั้งคู่ไม่ฝัง credential; `.mcp.json` อ้าง `CODEX_X_MCP_TOKEN` เป็น `bearer_token_env_var`. `codex-x-app` ใช้ Skill `codex-x-app-tool` ที่ ship ในโปรเจกต์นี้เองและ map ไป Native Codex app-server protocol โดยตรง ไม่พึ่ง `codex-app-tools@openai-bundled` ที่ runtime.
 
 ```bash
 cd <plugin-root>/server
@@ -33,9 +33,9 @@ Standalone stdio ยังใช้ได้เมื่อไม่มี bridg
 
 ## Codex model picker
 
-MCP `tools/list` ไม่ได้ register model เข้า Codex host picker. v0.2.18 จึงเพิ่ม Codex-native catalog generation สำหรับ local Responses provider เดิม. `python3 -m bridge codex-catalog` clone metadata จาก bundled catalog ของ Codex ที่ติดตั้งอยู่ แล้ว expose เฉพาะ packaged aliases `chatgpt-web/*`; วิธีนี้เลี่ยงการ ship model-schema snapshot ที่อาจไม่ตรงกับ Codex version. `python3 -m bridge codex` regenerate catalog เดียวกันอัตโนมัติและตั้ง `custom_gpt_bridge` provider ให้ process ที่ launch ผ่าน wrapper.
+MCP `tools/list` ไม่ได้ register model เข้า Codex host picker. `python3 -m bridge codex-catalog` ยังคงเป็น compatibility utility สำหรับสร้าง alias catalog จาก metadata ของ Codex ที่ติดตั้งอยู่ แต่ไม่ใช่ inference provider. ตั้งแต่ v0.2.20 `python3 -m bridge codex` บังคับใช้ Native Codex `openai` provider โดยตรงและไม่ตั้ง `custom_gpt_bridge`, ไม่ inject bridge provider secret และไม่ route inference กลับเข้า `/v1` ของ Codex X Mode.
 
-Codex Desktop ต้องมี user-level `model_provider` + `model_catalog_json` wiring แยกจาก MCP config เพราะ plugin/MCP manifest ไม่ได้เปลี่ยน host model provider. เก็บ `provider_key` นอก `config.toml`; provider อ้างผ่าน `CODEX_BRIDGE_PROVIDER_KEY` เท่านั้น. การเพิ่ม catalog พิสูจน์ได้แค่ว่า model selectable; inference PASS ต้องมี backend turn สำเร็จและ model identity ตรงกับ alias ที่เลือก.
+Codex Desktop ไม่ควรถูกบังคับให้ใช้ `custom_gpt_bridge` หรือ user-level alias catalog เพื่อ inference. Native Codex auth/provider เป็น source of truth สำหรับการรันโมเดล; Codex X Mode ใช้ alias เฉพาะใน orchestration surface และ map ไป exact Native Codex model ID ก่อน execution. Inference PASS ต้องมี terminal model identity ตรง exact model และไม่มี reroute.
 
 ## Native MCP surface
 
@@ -63,7 +63,8 @@ Task ที่มี execution state `unknown` ยังคงอยู่เพ
 
 `python3 -m bridge serve` เปิด loopback service ที่ `127.0.0.1:8240`:
 
-- `/mcp` — MCP `2026-07-28`, Bearer `mcp_key`
+- `/mcp` — Codex X Mode MCP `2026-07-28`, Bearer `mcp_key`
+- `/codex-x-app/mcp` — Codex X App MCP, Bearer `mcp_key`; native-backed thread tools for Codex CLI 0.160.1
 - Actions routes เช่น `/status`, `/projects`, `/models`, `/tasks`, `/backend/...` — Bearer `gpt_key`
 - private Codex Responses provider `/v1/...` — Bearer `provider_key`
 
