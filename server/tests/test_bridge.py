@@ -278,10 +278,19 @@ class DispatchDiagnosticsTests(unittest.TestCase):
     def test_model_catalog_reads_only_supported_account_models(self):
         self.config["codex_command"] = [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))]
         models = list_models(self.config)["models"]
-        self.assertEqual(models, [{
-            "id": "fixture-model", "model": "fixture-model", "display_name": "Fixture Model",
-            "is_default": True, "supported_reasoning_efforts": ["medium"],
-        }])
+        self.assertEqual(models, [
+            {
+                "id": "fixture-model", "model": "fixture-model", "display_name": "Fixture Model",
+                "is_default": True, "default_reasoning_effort": "medium",
+                "supported_reasoning_efforts": ["medium"],
+            },
+            {
+                "id": "chatgpt-web/fixture-model", "model": "chatgpt-web/fixture-model",
+                "display_name": "Fixture Web Model", "is_default": False,
+                "default_reasoning_effort": "high",
+                "supported_reasoning_efforts": ["medium", "high"],
+            },
+        ])
 
     def test_model_catalog_labels_backend_and_does_not_claim_entitlement(self):
         self.config["codex_command"] = [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))]
@@ -459,8 +468,9 @@ class DispatchDiagnosticsTests(unittest.TestCase):
         value = status(self.config, self.store)
         self.assertEqual(value["readiness"]["web_executor"], "implemented_unverified")
         self.assertEqual(value["execution_backends"]["local_stdio"], "codex_app_server")
-        self.assertEqual(value["execution_backends"]["web_http"], "chatgpt_plan")
-        self.assertEqual(value["chatgpt_plan_authorization"]["state"], "authorization_required")
+        self.assertEqual(value["execution_backends"]["web_http"], "codex_app_server")
+        self.assertEqual(value["web_model_family"], "chatgpt-web")
+        self.assertEqual(value["chatgpt_plan_authorization"]["state"], "not_required")
         self.assertFalse(value["live_codex_verified"])
 
 
@@ -554,15 +564,9 @@ class HTTPTests(unittest.TestCase):
         (root / "leak.txt").symlink_to(Path(self.tmp.name) / "secret.txt")
         self.config = {"gpt_key": "g" * 40, "provider_key": "p" * 40, "mcp_key": "m" * 40,
                        "projects": {"demo": {"cwd": str(root.resolve()), "allow_write": False}},
-                       "codex_command": ["unavailable-fixture"], "backend_timeout_seconds": 2}
-        # Only plan inference uses fixtures; HTTP transport and authentication are real.
-        from tests.test_siwc import credentials
-        from tests.test_siwc_dispatch import CATALOG
-        self.config["chatgpt_plan_default_model"] = "fixture-model"
-        auth = patch("bridge.siwc.get_credentials", return_value=credentials("fixture-host"))
-        catalog = patch("bridge.siwc._request_json", return_value=CATALOG)
-        auth.start(); catalog.start()
-        self.addCleanup(auth.stop); self.addCleanup(catalog.stop)
+                       "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
+                       "chatgpt_web_default_model": "chatgpt-web/fixture-model",
+                       "backend_timeout_seconds": 2}
         self.server = Server(("127.0.0.1", 0), self.config, self.store, start_worker=False)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -614,10 +618,9 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/tasks/" + job["id"])[1]["state"], "queued")
         self.assertEqual(self.request("POST", "/tasks/" + job["id"] + "/followups", {"prompt": "more", "request_key": "two"})[0], 409)
 
-    def test_web_authorization_absence_blocks_dispatch_but_preserves_project_reads(self):
-        from bridge.siwc import SiwcError
-        body = {"project_id": "demo", "prompt": "review", "scope": "read-only", "request_key": "no-authorization"}
-        with patch("bridge.siwc.get_credentials", side_effect=SiwcError("ChatGPT plan authorization is required")):
+    def test_web_catalog_unavailable_blocks_dispatch_but_preserves_project_reads(self):
+        body = {"project_id": "demo", "prompt": "review", "scope": "read-only", "request_key": "no-catalog"}
+        with patch("bridge.service.codex_list_models", side_effect=OSError("fixture catalog unavailable")):
             self.assertEqual(self.request("GET", "/models")[0], 503)
             self.assertEqual(self.request("POST", "/tasks", body)[0], 503)
             self.assertEqual(self.request("GET", "/projects/demo/file?path=hello.txt")[0], 200)
@@ -675,7 +678,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(listed["result"]["resultType"], "complete")
         self.assertEqual(listed["result"]["ttlMs"], 0)
         self.assertEqual(listed["result"]["cacheScope"], "private")
-        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.11")
+        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.12")
 
         mismatch = dict(request)
         mismatch["id"] = 5

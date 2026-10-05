@@ -30,14 +30,8 @@ class ClientIntegrationTests(unittest.TestCase):
         self.config = {"gpt_key": "g" * 40, "provider_key": "p" * 40, "mcp_key": "m" * 40,
             "projects": {"demo": {"cwd": str(project.resolve()), "allow_write": False}},
             "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
+            "chatgpt_web_default_model": "chatgpt-web/fixture-model",
             "task_timeout_seconds": 5}
-        from tests.test_siwc import credentials
-        from tests.test_siwc_dispatch import CATALOG
-        self.config["chatgpt_plan_default_model"] = "fixture-model"
-        auth = patch("bridge.siwc.get_credentials", return_value=credentials("fixture-host"))
-        catalog = patch("bridge.siwc._request_json", return_value=CATALOG)
-        auth.start(); catalog.start()
-        self.addCleanup(auth.stop); self.addCleanup(catalog.stop)
         self.config_path = self.root / "private.json"
         self.config_path.write_text(json.dumps(self.config))
         self.config_path.chmod(0o600)

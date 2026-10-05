@@ -240,3 +240,30 @@ Source: current account release pluginrel_6ac1eb5140e481919a61778795235240 (0.2.
 - Real post-deploy inference remains **NOT RUN in this package candidate** and
   still requires terminal exact-model evidence before `live_codex_verified`
   may become true.
+
+## v0.2.12 package verification (2026-10-05)
+
+- Web-origin acceptance now persists `execution_backend=codex_app_server` and
+  `dispatch_origin=web`; new Web tasks do not use SIWC/`chatgpt_plan`. The old
+  plan backend is retained only to reconcile persisted pre-v0.2.12 tasks.
+- `codex_x_list_models` uses Native Codex `model/list`; Web-origin discovery is
+  restricted to exact `chatgpt-web/*` IDs. Acceptance snapshots the exact model,
+  supported/default reasoning efforts and selected effort. Execution revalidates
+  that snapshot against an independent app-server catalog before `thread/start`.
+- `turn/start` explicitly carries the accepted supported effort. The fixture Web
+  model requires `high`, so an inherited/global incompatible effort such as `max`
+  is covered by fail-closed regression tests.
+- Exact-model verification remains fail-closed: a completed turn without terminal
+  model identity or with a `model/rerouted` notification remains `unknown` and is
+  not replayed as acceptance evidence.
+- Focused Web/HTTP/app-server/client regression suite: **44/44 PASS**.
+- `python3 -B -m compileall -q server/bridge server/tests server/scripts`: **PASS**.
+- `python3 -B -m unittest discover -s tests -v`: **92/92 PASS**, exit 0
+  (25.066 s) after rebuilding the deterministic runtime bundle.
+- Runtime bundle SHA-256 after the first v0.2.12 source rebuild:
+  `e606b7aed64868dba3209c1aa36e12c7a9babdb484508b56654235a549c4c20f`.
+  The final release hash must be re-recorded after this validation text is bundled.
+- **Not yet architecture acceptance:** the clean-install test must still prove the
+  `chatgpt-web` Web route adapter is owned/shipped by this repository rather than
+  supplied by an external project/runtime. Real Web → Bridge → Native Codex →
+  ChatGPT Web exact-terminal-model acceptance is therefore still **NOT PROVEN**.

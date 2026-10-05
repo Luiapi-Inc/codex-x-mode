@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Codex X Mode Bridge",
-    "version": "0.2.11"
+    "version": "0.2.12"
   },
   "servers": [
     {

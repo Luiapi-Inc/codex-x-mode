@@ -18,11 +18,22 @@ for line in sys.stdin:
         emit({"id": request["id"], "result": {}})
     elif method == "model/list":
         assert request["params"]["includeHidden"] is False
-        emit({"id": request["id"], "result": {"data": [{
-            "id": "fixture-model", "model": "fixture-model", "displayName": "Fixture Model",
-            "hidden": False, "isDefault": True,
-            "supportedReasoningEfforts": [{"reasoningEffort": "medium", "description": "Fixture"}],
-        }], "nextCursor": None}})
+        emit({"id": request["id"], "result": {"data": [
+            {
+                "id": "fixture-model", "model": "fixture-model", "displayName": "Fixture Model",
+                "hidden": False, "isDefault": True, "defaultReasoningEffort": "medium",
+                "supportedReasoningEfforts": [{"reasoningEffort": "medium", "description": "Fixture"}],
+            },
+            {
+                "id": "chatgpt-web/fixture-model", "model": "chatgpt-web/fixture-model",
+                "displayName": "Fixture Web Model", "hidden": False, "isDefault": False,
+                "defaultReasoningEffort": "high",
+                "supportedReasoningEfforts": [
+                    {"reasoningEffort": "medium", "description": "Fixture Web medium"},
+                    {"reasoningEffort": "high", "description": "Fixture Web high"},
+                ],
+            },
+        ], "nextCursor": None}})
     elif method in ("thread/start", "thread/resume"):
         assert request["params"]["approvalPolicy"] == "never"
         assert request["params"]["sandbox"] in ("read-only", "workspace-write")
@@ -30,7 +41,9 @@ for line in sys.stdin:
     elif method == "turn/start":
         params = request["params"]
         assert params["approvalPolicy"] == "never"
-        assert params["model"] == "fixture-model"
+        assert params["model"] in ("fixture-model", "chatgpt-web/fixture-model")
+        expected_effort = "high" if params["model"].startswith("chatgpt-web/") else "medium"
+        assert params.get("effort") == expected_effort
         assert "sandboxPolicy" not in params
         emit({"id": request["id"], "result": {"turn": {"id": "fixture-turn", "status": "inProgress"}}})
         emit({"id": "fixture-approval", "method": "item/commandExecution/requestApproval",

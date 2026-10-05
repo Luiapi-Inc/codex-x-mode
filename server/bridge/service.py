@@ -20,10 +20,9 @@ def public_job(job):
 
 def status(config, store):
     unknown = store.unknown_projects()
-    authorization = siwc.authorization_status(config) if config.get("siwc_credentials_file") or config.get("_config_path") else {"state": "authorization_required"}
     return {
         "status": "up",
-        "version": "0.2.11",
+        "version": "0.2.12",
         "live_codex_verified": False,
         "projects": len(config.get("projects", {})),
         "unknown_projects": unknown,
@@ -37,9 +36,10 @@ def status(config, store):
         },
         "execution_backends": {
             "local_stdio": "codex_app_server",
-            "web_http": "chatgpt_plan",
+            "web_http": "codex_app_server",
         },
-        "chatgpt_plan_authorization": authorization,
+        "web_model_family": "chatgpt-web",
+        "chatgpt_plan_authorization": {"state": "not_required"},
         "capabilities": {
             "backend": ["claim", "context", "complete", "cancel"],
             "dispatch": ["models", "create", "read", "continue", "cancel"],
@@ -59,27 +59,59 @@ def list_projects(config):
 
 
 def list_models(config):
-    if _backend(config) == "chatgpt_plan":
-        try:
-            return siwc.list_models(config)
-        except (siwc.SiwcError, OSError) as exc:
-            raise Fault(503, str(exc) if isinstance(exc, siwc.SiwcError) else "Protected credentials are unavailable") from None
-    return codex_list_models(config)
+    prefix = "chatgpt-web/" if _origin(config) == "web" else None
+    try:
+        return codex_list_models(config, required_prefix=prefix)
+    except (OSError, RuntimeError) as exc:
+        raise Fault(503, "Codex model catalog is unavailable") from exc
 
+
+def _origin(config):
+    return "web" if config.get("_dispatch_origin") == "web" else "local"
 
 def _backend(config):
-    return "chatgpt_plan" if config.get("_dispatch_origin") == "web" else "codex_app_server"
+    return "codex_app_server"
+
+
+def _web_model_snapshot(config, requested):
+    try:
+        catalog = codex_list_models(config, required_prefix="chatgpt-web/")
+    except (OSError, RuntimeError) as exc:
+        raise Fault(503, "Codex Web model catalog is unavailable") from exc
+    models = catalog.get("models", [])
+    selected_id = requested
+    source = "requested"
+    if selected_id in (None, "chatgpt-web"):
+        selected_id = config.get("chatgpt_web_default_model")
+        source = "configured_default"
+        if not isinstance(selected_id, str) or not selected_id:
+            raise Fault(400, "Web dispatch requires an exact model_version or chatgpt_web_default_model")
+    matches = [item for item in models if item.get("id") == selected_id]
+    if len(matches) != 1:
+        raise Fault(400, "Requested Web model is unavailable to Native Codex")
+    selected = dict(matches[0])
+    supported = selected.get("supported_reasoning_efforts") or []
+    effort = config.get("chatgpt_web_reasoning_effort") or selected.get("default_reasoning_effort")
+    if effort is None and len(supported) == 1:
+        effort = supported[0]
+    if not isinstance(effort, str) or not effort:
+        raise Fault(400, "Selected Web model has no unambiguous reasoning effort")
+    if supported and effort not in supported:
+        raise Fault(400, "Selected Web model does not support the configured reasoning effort")
+    selected["reasoning_effort"] = effort
+    selected["source"] = source
+    return selected
 
 
 def _retry_task(store, request_key, payload):
-    """Recover original request identity before any remote credential/catalog read."""
+    """Recover original request identity before any remote catalog read."""
     prior = store.find_by_request("task", request_key)
     if prior is None:
         return None
     original = prior["payload"]
-    # Selection and account binding are derived once on acceptance. An omitted
-    # model must keep that original selection even if the configured default changes.
-    keys = ("project_id", "prompt", "scope", "parent_task_id", "model_version", "resource_id")
+    # Selection is derived once on acceptance. An omitted model must keep that
+    # original selection even if the configured Web default changes.
+    keys = ("project_id", "prompt", "scope", "parent_task_id", "model_version", "resource_id", "dispatch_origin")
     if any(original.get(key) != payload.get(key) for key in keys) or original.get("execution_backend", "codex_app_server") != payload["execution_backend"]:
         raise Fault(409, "Request key already used for different input")
     return public_job(prior)
@@ -87,26 +119,20 @@ def _retry_task(store, request_key, payload):
 
 def _accept_task(config, store, payload, request_key):
     text(request_key, "request_key", 200)
+    current_origin = _origin(config)
+    existing_origin = payload.get("dispatch_origin")
+    if existing_origin is not None and existing_origin != current_origin:
+        raise Fault(409, "Follow-up cannot change the parent dispatch origin")
+    payload["dispatch_origin"] = current_origin
     payload["execution_backend"] = _backend(config)
-    # Serialize acceptance around the catalog read so concurrent duplicates never
-    # observe different derived selection/account snapshots or create two jobs.
+    # Serialize acceptance around model selection so concurrent duplicates never
+    # observe different catalog snapshots or create two jobs.
     with store.lock:
         prior = _retry_task(store, request_key, payload)
         if prior is not None:
             return prior
-        if payload["execution_backend"] == "chatgpt_plan":
-            try:
-                credentials = siwc.get_credentials(config)
-                parent_id = payload.get("parent_task_id")
-                if parent_id:
-                    parent = store.get(parent_id, "task")["payload"]
-                    if parent.get("execution_backend", "codex_app_server") != "chatgpt_plan" or parent.get("siwc_registration") != siwc.registration(credentials):
-                        raise Fault(409, "Follow-up cannot change the parent execution backend or account registration")
-                catalog = siwc.list_models(config, credentials=credentials)
-                payload["selected_model"] = siwc.select_model(catalog, payload.get("model_version"), config.get("chatgpt_plan_default_model"))
-                payload["siwc_registration"] = siwc.registration(credentials)
-            except (siwc.SiwcError, OSError) as exc:
-                raise Fault(503, str(exc) if isinstance(exc, siwc.SiwcError) else "Protected credentials are unavailable") from None
+        if current_origin == "web":
+            payload["selected_model"] = _web_model_snapshot(config, payload.get("model_version"))
         return public_job(store.create("task", payload, request_key))
 
 
@@ -354,6 +380,14 @@ def continue_task(config, store, task_id, body):
     fields(body, ("prompt", "request_key"), ("model_version",))
     text(body["prompt"], "prompt")
     parent = store.get(task_id, "task")
+    parent_backend = parent["payload"].get("execution_backend", "codex_app_server")
+    if parent_backend != _backend(config):
+        raise Fault(409, "Follow-up cannot change the parent execution backend")
+    parent_origin = parent["payload"].get("dispatch_origin")
+    if parent_origin is None:
+        parent_origin = "web" if parent_backend == "chatgpt_plan" else "local"
+    if parent_origin != _origin(config):
+        raise Fault(409, "Follow-up cannot change the parent dispatch origin")
     payload = {key: value for key, value in parent["payload"].items() if key not in ("selected_model", "siwc_registration", "execution_backend")}
     # Preserve the actual selected model for a follow-up, including a configured
     # default used by a parent whose original request omitted model_version.
@@ -369,9 +403,6 @@ def continue_task(config, store, task_id, body):
     project = project_config(config, payload["project_id"], payload["scope"])
     payload["resource_id"], payload["resource_project_ids"] = _resource_identity(
         config, payload["project_id"], project)
-    parent_backend = parent["payload"].get("execution_backend", "codex_app_server")
-    if parent_backend != _backend(config):
-        raise Fault(409, "Follow-up cannot change the parent execution backend")
     return _accept_task(config, store, payload, body["request_key"])
 
 

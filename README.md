@@ -1,12 +1,13 @@
 # Codex X Mode
 
-v0.2.11 integrates Sign in with ChatGPT (SIWC) credentials and dispatch routing,
-and makes the authenticated HTTP MCP bridge compatible with Secure MCP Tunnel
-no-OAuth discovery by returning 404 for unadvertised MCP/OAuth GET probes.
-HTTP MCP/Actions tasks use the ChatGPT-plan Responses provider; local stdio
-tasks keep the Codex app-server backend. Backend choice is server-controlled.
-New web tasks require protected credentials and an exact token-scoped model
-selection before queue acceptance. Retries recover the original job first.
+v0.2.12 moves Web-origin dispatch onto the Native Codex app-server path. Web
+model discovery is restricted to exact `chatgpt-web/*` IDs from Native Codex
+`model/list`; a selected model snapshot records its exact ID and supported/default
+reasoning effort before queue acceptance, and execution revalidates that snapshot
+before `thread/start`. A supported effort is sent explicitly on `turn/start`.
+New Web tasks never select `chatgpt_plan`; that path remains only for recovery
+of persisted pre-0.2.12 tasks. Exact-model acceptance remains fail-closed when
+terminal model identity is absent or a reroute is observed.
 
 Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP tools + bridge runtime** ไว้ใน package เดียว ไม่ต้องพึ่ง plugin หรือ skill อื่นเพื่อทำ Backend/Dispatch workflow หลัก
 
@@ -15,9 +16,9 @@ Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP
 | Backend | รับ model turn ที่ Codex local provider รอคำตอบอยู่ | `codex_x_claim_backend_turn` → `codex_x_read_backend_context` → `codex_x_complete_backend_turn` / `codex_x_cancel_backend_turn` |
 | Dispatch | ส่งงานที่ผู้ใช้อนุญาตให้ Codex ทำใน project allowlist | `codex_x_create_task` → `codex_x_read_task` → `codex_x_continue_task` / `codex_x_cancel_task` |
 
-มีทั้งหมด 13 tools พร้อม 2 resources และ 2 prompts. Web อ่าน model catalog ของ account ด้วย OAuth access token; local stdio อ่าน Codex app-server catalog. Catalog ไม่ยืนยัน inference entitlement; `inference_verified` ต้องมี completed turn และ terminal model identity ตรงกันโดยไม่มี reroute
+มีทั้งหมด 13 tools พร้อม 2 resources และ 2 prompts. Web และ local stdio อ่าน model catalog จาก Native Codex app-server; Web surface filter เฉพาะ `chatgpt-web/*`. Catalog ไม่ยืนยัน inference entitlement; `inference_verified` ต้องมี completed turn และ terminal model identity ตรงกันโดยไม่มี reroute
 
-SIWC และ web dispatch เชื่อมแล้วใน source แต่ยังไม่ผ่าน real OpenAI inference หรือ public HTTPS acceptance. สถานะใช้ `web_executor: implemented_unverified`. การเลือก model ใน bridge ไม่เปลี่ยน model ของบทสนทนา ChatGPT และการอัปโหลด plugin ไม่ deploy bridge
+Web dispatch ผ่าน fixture/package validation แล้ว แต่ยังไม่ผ่าน clean-install self-contained acceptance หรือ real Web → Bridge → Native Codex → ChatGPT Web terminal verification. สถานะจึงยังใช้ `web_executor: implemented_unverified` และ `live_codex_verified=false`. การเลือก model ใน bridge ไม่เปลี่ยน model ของบทสนทนา ChatGPT และการอัปโหลด plugin ไม่ deploy bridge
 
 v0.2.5 adds a bundled Python MCP client, read-only readiness CLI and real
 HTTP/stdio integration tests. HTTP accepts modern requests and stateless
@@ -83,9 +84,9 @@ python3 -m bridge schema --url https://YOUR-ACTUAL-BRIDGE-HOST --output openapi.
 
 ## Verification
 
-See `server/VALIDATION.md` for v0.2.11 validation and `server/SIWC.md` for
-authorization, protected import, routing and recovery. Real OpenAI OAuth,
-real Codex inference, public HTTPS acceptance and Web → Codex → Web remain
-**NOT RUN**.
-Package publication is separate from bridge deployment; the connected service
-was last observed at 0.2.3 with `unknown_projects=["smoke"]`.
+See `server/VALIDATION.md` for v0.2.12 package evidence. The bridge routing
+change is test-verified, but **architecture acceptance is not complete** until
+the Web route adapter is project-owned in this repository and a clean install
+proves a real Web → Bridge → Native Codex → `chatgpt-web/<version>` → ChatGPT
+Web terminal turn with exact model identity and no reroute. Package publication
+is separate from runtime deployment.

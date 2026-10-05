@@ -163,45 +163,78 @@ def _model_catalog(app):
     raise ModelSelectionError("Codex model catalog exceeded the supported page limit")
 
 
-def _select_model(models, requested=None):
+def _select_model(models, requested=None, *, required_prefix=None, default_model=None, reasoning_effort=None):
+    eligible = [
+        item for item in models
+        if required_prefix is None or (isinstance(item.get("id"), str) and item["id"].startswith(required_prefix))
+    ]
+    family_alias = required_prefix[:-1] if isinstance(required_prefix, str) and required_prefix.endswith("/") else None
+    if requested == family_alias:
+        requested = None
     if requested is None:
-        matches = [item for item in models if item.get("isDefault") is True]
+        if default_model is not None:
+            matches = [item for item in eligible if item.get("id") == default_model]
+            source = "configured_default"
+        else:
+            matches = [item for item in eligible if item.get("isDefault") is True]
+            source = "account_default"
         if len(matches) != 1:
             raise ModelSelectionError("Codex account has no unambiguous default model")
         selected = matches[0]
-        source = "account_default"
     else:
-        matches = [item for item in models if item.get("id") == requested]
+        matches = [item for item in eligible if item.get("id") == requested]
         if len(matches) != 1:
             raise ModelSelectionError("Requested model is unavailable to the Codex account")
         selected = matches[0]
         source = "requested"
+    supported = [
+        value.get("reasoningEffort") for value in selected.get("supportedReasoningEfforts", [])
+        if isinstance(value, dict) and isinstance(value.get("reasoningEffort"), str)
+    ] if isinstance(selected.get("supportedReasoningEfforts", []), list) else []
+    default_effort = selected.get("defaultReasoningEffort") if isinstance(selected.get("defaultReasoningEffort"), str) else None
+    effort = reasoning_effort or default_effort
+    if effort is None and len(supported) == 1:
+        effort = supported[0]
+    if effort is not None and supported and effort not in supported:
+        raise ModelSelectionError("Selected model does not support the requested reasoning effort")
+    if required_prefix is not None and not effort:
+        raise ModelSelectionError("Selected Web model has no unambiguous reasoning effort")
     return {
         "id": selected["id"],
         "model": selected["model"],
         "display_name": selected.get("displayName") if isinstance(selected.get("displayName"), str) else selected["id"],
         "source": source,
+        "default_reasoning_effort": default_effort,
+        "supported_reasoning_efforts": supported,
+        "reasoning_effort": effort,
     }
 
 
-def list_models(config):
+def list_models(config, required_prefix=None):
     """Return the Codex app-server catalog without claiming model entitlement."""
     app = None
     try:
         app = _app_server(config, timeout=config.get("model_list_timeout_seconds", 60))
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.11"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.12"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
+        if required_prefix is not None:
+            items = [
+                item for item in items
+                if isinstance(item.get("id"), str) and item["id"].startswith(required_prefix)
+            ]
         return {
             "backend": "codex_app_server",
             "catalog_source": "model/list",
             "catalog_integrity_verified": True,
             "model_entitlement_verified": False,
+            "required_prefix": required_prefix,
             "models": [{
                 "id": item["id"],
                 "model": item["model"],
                 "display_name": item.get("displayName") if isinstance(item.get("displayName"), str) else item["id"],
                 "is_default": item.get("isDefault") is True,
+                "default_reasoning_effort": item.get("defaultReasoningEffort") if isinstance(item.get("defaultReasoningEffort"), str) else None,
                 "supported_reasoning_efforts": [
                     value.get("reasoningEffort") for value in item.get("supportedReasoningEfforts", [])
                     if isinstance(value, dict) and isinstance(value.get("reasoningEffort"), str)
@@ -235,15 +268,22 @@ def run_task(config, store, job, stop=None):
     turn_start_attempted = False
     selected_model = None
     model_reroutes = []
+    credentials = None
     try:
         payload = job["payload"]
         backend = payload.get("execution_backend", "codex_app_server")
+        dispatch_origin = payload.get("dispatch_origin")
+        if dispatch_origin is None:
+            # Legacy plan tasks are preserved only for reconciliation. New Web
+            # tasks always persist dispatch_origin at acceptance.
+            dispatch_origin = "web" if backend == "chatgpt_plan" else "local"
         if config.get("_dispatch_origin") == "web" and "execution_backend" not in payload:
             raise ModelSelectionError("Legacy task origin is unverified; reconcile it before web dispatch")
         phase = "validate_project"
         project = project_config(config, payload["project_id"], payload["scope"])
-        credentials = None
         if backend == "chatgpt_plan":
+            # Backward-compatible execution/reconciliation path for persisted
+            # pre-0.2.12 tasks only. New acceptance never selects this backend.
             phase = "chatgpt_plan_authorization"
             credentials = siwc.get_credentials(config)
             if payload.get("siwc_registration") != siwc.registration(credentials):
@@ -257,38 +297,72 @@ def run_task(config, store, job, stop=None):
             if selected_model["model"] != snapshot.get("model"):
                 raise siwc.SiwcError("Task model selection no longer matches the account catalog")
             selected_model["source"] = snapshot["source"]
+        elif backend != "codex_app_server":
+            raise ModelSelectionError("Task execution backend is invalid")
+
         phase = "launch_app_server"
         launch_args = (config, config.get("task_timeout_seconds", 600), stop, lambda: store.cancel_requested(job["id"]))
         app = (_app_server(*launch_args, backend=backend, credentials=credentials) if backend == "chatgpt_plan"
                else _app_server(*launch_args, backend=backend))
         phase = "initialize"
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.11"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.12"}})
         app.send({"method": "initialized", "params": {}})
+
         if backend == "codex_app_server":
             phase = "model_catalog"
             try:
-                selected_model = _select_model(_model_catalog(app), payload.get("model_version"))
+                catalog = _model_catalog(app)
+                if dispatch_origin == "web":
+                    snapshot = payload.get("selected_model")
+                    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
+                        raise ModelSelectionError("Web task has no validated model selection")
+                    selected_model = _select_model(
+                        catalog,
+                        snapshot["id"],
+                        required_prefix="chatgpt-web/",
+                        reasoning_effort=snapshot.get("reasoning_effort"),
+                    )
+                    if selected_model["model"] != snapshot.get("model"):
+                        raise ModelSelectionError("Web task model selection no longer matches the Native Codex catalog")
+                    if selected_model.get("reasoning_effort") != snapshot.get("reasoning_effort"):
+                        raise ModelSelectionError("Web task reasoning effort no longer matches the accepted model snapshot")
+                    selected_model["source"] = snapshot.get("source", "requested")
+                else:
+                    selected_model = _select_model(catalog, payload.get("model_version"))
             except ModelSelectionError:
                 raise
             except Exception as exc:
                 raise ModelSelectionError("Codex model catalog could not be verified") from exc
-        params = {"cwd": project["cwd"], "approvalPolicy": "never",
-                  "sandbox": "read-only" if payload["scope"] == "read-only" else "workspace-write",
-                  "model": selected_model["model"]}
+
+        thread_params = {
+            "cwd": project["cwd"],
+            "approvalPolicy": "never",
+            "sandbox": "read-only" if payload["scope"] == "read-only" else "workspace-write",
+            "model": selected_model["model"],
+        }
         if backend == "chatgpt_plan":
-            params["modelProvider"] = "openai_chatgpt_plan"
+            thread_params["modelProvider"] = "openai_chatgpt_plan"
         parent_id = payload.get("parent_task_id")
         if parent_id:
-            params["threadId"] = store.get(parent_id, "task")["thread_id"]
+            thread_params["threadId"] = store.get(parent_id, "task")["thread_id"]
         phase = "thread_start"
-        thread = app.call("thread/resume" if parent_id else "thread/start", params)["thread"]
+        thread = app.call("thread/resume" if parent_id else "thread/start", thread_params)["thread"]
         store.update_task(job["id"], thread_id=thread["id"])
+
         phase = "turn_start"
         turn_start_attempted = True
-        turn = app.call("turn/start", {"threadId": thread["id"], "cwd": project["cwd"], "approvalPolicy": "never",
-                                       "model": selected_model["model"],
-                                       "input": [{"type": "text", "text": payload["prompt"]}]})["turn"]
+        turn_params = {
+            "threadId": thread["id"],
+            "cwd": project["cwd"],
+            "approvalPolicy": "never",
+            "model": selected_model["model"],
+            "input": [{"type": "text", "text": payload["prompt"]}],
+        }
+        if isinstance(selected_model.get("reasoning_effort"), str):
+            turn_params["effort"] = selected_model["reasoning_effort"]
+        turn = app.call("turn/start", turn_params)["turn"]
         store.update_task(job["id"], turn_id=turn["id"])
+
         phase = "wait_for_turn"
         answer, observations = "", []
         while True:
@@ -322,10 +396,12 @@ def run_task(config, store, job, stop=None):
                                   result=_redact_tokens({"answer": answer, "observations": observations, "codex_status": final["status"],
                                           "model_selection": {
                                               "backend": backend,
+                                              "dispatch_origin": dispatch_origin,
                                               "catalog_source": "responses_api_models" if backend == "chatgpt_plan" else "model/list",
                                               "id": selected_model["id"],
                                               "model": selected_model["model"],
                                               "source": selected_model["source"],
+                                              "reasoning_effort": selected_model.get("reasoning_effort"),
                                               "catalog_integrity_verified": True,
                                               "explicitly_sent": True,
                                               "observed_model": observed_model,
