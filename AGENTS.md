@@ -9,7 +9,7 @@ Read `docs/CODEX_X_MODE_SOURCE_OF_TRUTH.md` before changing dispatch, model rout
 Web-originated execution must remain:
 
 ```text
-ChatGPT Web -> Codex X Mode bridge -> Native Codex app-server -> exact chatgpt-web/<version> -> project-owned Web route adapter -> ChatGPT Web backend
+ChatGPT Web -> Codex X Mode bridge -> Native Codex app-server -> exact chatgpt-web/<version> -> ChatGPT Web backend
 ```
 
 Do not route Web-originated tasks to `chatgpt_plan`.

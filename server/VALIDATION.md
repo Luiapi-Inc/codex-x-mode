@@ -264,6 +264,6 @@ Source: current account release pluginrel_6ac1eb5140e481919a61778795235240 (0.2.
   `e606b7aed64868dba3209c1aa36e12c7a9babdb484508b56654235a549c4c20f`.
   The final release hash must be re-recorded after this validation text is bundled.
 - **Not yet architecture acceptance:** the clean-install test must still prove the
-  `chatgpt-web` Web route adapter is owned/shipped by this repository rather than
-  supplied by an external project/runtime. Real Web → Bridge → Native Codex →
+  headless Native Codex route works without Chromium, Playwright, browser automation,
+  a browser profile/daemon, or a second connector. Real Web → Bridge → Native Codex →
   ChatGPT Web exact-terminal-model acceptance is therefore still **NOT PROVEN**.

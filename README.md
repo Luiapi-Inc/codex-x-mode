@@ -86,7 +86,8 @@ python3 -m bridge schema --url https://YOUR-ACTUAL-BRIDGE-HOST --output openapi.
 
 See `server/VALIDATION.md` for v0.2.12 package evidence. The bridge routing
 change is test-verified, but **architecture acceptance is not complete** until
-the Web route adapter is project-owned in this repository and a clean install
-proves a real Web → Bridge → Native Codex → `chatgpt-web/<version>` → ChatGPT
-Web terminal turn with exact model identity and no reroute. Package publication
+the headless Native Codex path is sufficient on a clean install without Chromium,
+Playwright, browser automation, or another connector, and a real Web → Bridge →
+Native Codex → `chatgpt-web/<version>` → ChatGPT Web terminal turn completes
+with exact model identity and no reroute. Package publication
 is separate from runtime deployment.

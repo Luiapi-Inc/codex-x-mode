@@ -12,12 +12,17 @@ ChatGPT Web
   -> Codex X Mode bridge
   -> Native Codex app-server
   -> exact chatgpt-web/<selected-version>
-  -> project-owned Web route adapter
   -> ChatGPT Web backend
 ```
 
 Do not map Web-originated work to `chatgpt_plan`.
 Do not silently substitute `gpt-6-astra` or another non-`chatgpt-web/*` model.
+
+## Headless-first runtime contract
+
+The primary execution path MUST NOT require Chromium, Playwright, browser automation, DOM scraping, browser profiles, or a separate browser daemon/connector. Codex X Mode should remain idle-light: the bridge/tunnel may stay resident, while Native Codex child processes are created only when work requires them and terminate when the task completes.
+
+A browser-based compatibility path may exist only as an explicitly optional, non-default adapter after the headless Native Codex path has passed clean-install acceptance. It must never be required for normal Web-origin execution.
 
 ## Model/version contract
 
