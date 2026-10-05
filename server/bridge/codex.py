@@ -218,7 +218,7 @@ def list_models(config, required_prefix=None):
     app = None
     try:
         app = _app_server(config, timeout=config.get("model_list_timeout_seconds", 60))
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.16"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.17"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
@@ -318,7 +318,7 @@ def run_task(config, store, job, stop=None):
                if backend in ("chatgpt_web_headless", "chatgpt_plan")
                else _app_server(*launch_args, backend=backend))
         phase = "initialize"
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.16"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.17"}})
         app.send({"method": "initialized", "params": {}})
 
         if backend == "chatgpt_web_headless":

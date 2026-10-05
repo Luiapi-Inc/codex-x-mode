@@ -1,6 +1,6 @@
 # Codex X Mode
 
-v0.2.16 keeps Web-origin dispatch headless and package-aware, binds Web/Mobile through the verified Secure MCP Tunnel developer app, and retains sanitized terminal provider-error diagnostics for failed turns without weakening fail-closed model verification. Web model exposure is now the intersection of the packaged registry and the authorized ChatGPT account catalog. The packaged aliases currently include `chatgpt-web/5.5`, `chatgpt-web/5.6-luna`, and `chatgpt-web/5.6-sol`; models outside the packaged policy stay hidden even if the account can see them. A generic `chatgpt-web` request uses the configured default when that alias is entitled, otherwise it falls back to the highest-priority entitled packaged model. New Web tasks use the `chatgpt_web_headless` backend with Native Codex app-server execution and no Chromium, Playwright, browser profile, browser daemon, or second connector. Legacy `chatgpt_plan` handling remains only for persisted pre-v0.2.12 recovery. Exact terminal model identity remains fail-closed when absent or rerouted.
+v0.2.17 keeps Web-origin dispatch headless and package-aware, binds Web/Mobile through the verified Secure MCP Tunnel developer app, and retains sanitized terminal provider-error diagnostics for failed turns without weakening fail-closed model verification. Web model exposure is now the intersection of the packaged registry and the authorized ChatGPT account catalog. The packaged aliases currently include `chatgpt-web/5.5`, `chatgpt-web/5.6-luna`, and `chatgpt-web/5.6-sol`; models outside the packaged policy stay hidden even if the account can see them. A generic `chatgpt-web` request uses the configured default when that alias is entitled, otherwise it falls back to the highest-priority entitled packaged model. New Web tasks use the `chatgpt_web_headless` backend with Native Codex app-server execution and no Chromium, Playwright, browser profile, browser daemon, or second connector. Legacy `chatgpt_plan` handling remains only for persisted pre-v0.2.12 recovery. Exact terminal model identity remains fail-closed when absent or rerouted.
 
 Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP tools + bridge runtime** ไว้ใน package เดียว ไม่ต้องพึ่ง plugin หรือ skill อื่นเพื่อทำ Backend/Dispatch workflow หลัก
 
@@ -21,7 +21,7 @@ publication; mobile availability requires verification in the actual host.
 
 ## Local setup
 
-Plugin มี portable `mcp.json` สำหรับ bundled stdio server และมี Codex compatibility config ใน `.mcp.json`. เมื่อ Codex ใช้ runtime เดียวกับ Secure Tunnel bridge ที่กำลังฟังบน Mac อยู่แล้ว `.mcp.json` จะเชื่อม `http://127.0.0.1:8240/mcp` โดยใช้ `CODEX_X_MCP_TOKEN` เป็น `bearer_token_env_var` แทนการ spawn stdio bridge ตัวที่สองซึ่งจะชน single-runtime lock. Token ต้องมาจาก machine-local private config/environment และห้ามฝังใน plugin archive.
+Plugin มี authoritative portable `mcp.json` ที่ประกาศ Streamable HTTP ไปยัง `http://127.0.0.1:8240/mcp` โดยไม่ฝัง credential และมี Codex compatibility config ใน `.mcp.json` ที่อ้าง `CODEX_X_MCP_TOKEN` เป็น `bearer_token_env_var`. User-level Codex configuration เป็นผู้จัดการ bearer credential ให้ identity/URL เดียวกัน. รูปแบบนี้ reuse Secure Tunnel bridge ที่กำลังฟังบน Mac แทนการ spawn stdio bridge ตัวที่สองซึ่งจะชน single-runtime lock.
 
 ```bash
 cd <plugin-root>/server
