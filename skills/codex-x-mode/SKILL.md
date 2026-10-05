@@ -42,17 +42,7 @@ Do not ask the user to choose Backend or Dispatch.
 5. An inert multipart stage returns only its required ACK.
 6. Ask only for a missing project, goal, or scope that changes the requested operation.
 
-Dispatch model selection is separate from the model serving this ChatGPT Web
-conversation. Use `codex_x_list_models` to inspect Native Codex `model/list`.
-For Web-origin dispatch, expose/select only exact `chatgpt-web/*` catalog IDs;
-never substitute another model. `chatgpt-web` is a family prefix, so a concrete
-version must be selected. Preserve each selected model's default/supported
-reasoning-effort metadata and send a supported effort explicitly on
-`turn/start`; never inherit an incompatible global effort. Web-origin and local
-stdio dispatch both execute through Native Codex app-server. `chatgpt_plan` is
-not a valid Web-origin execution backend. Any reroute away from the exact
-selected model is an acceptance failure. Keep real OAuth, live inference and
-public HTTPS claims separate from package publication.
+Dispatch model selection is separate from the model serving this ChatGPT Web conversation. For Web-origin dispatch, use `codex_x_list_models` to inspect the package-aware alias catalog. Visible aliases are the intersection of the packaged Web-model registry and the authorized ChatGPT account catalog. `chatgpt-web` is a family alias: use the entitled configured default when available, otherwise the highest-priority packaged+entitled alias. Explicit aliases outside the package registry are rejected even if upstream exposes them. Preserve the selected alias and exact underlying model, validate supported reasoning effort before `turn/start`, and fail closed when terminal model identity is absent or rerouted. Web-origin execution uses `chatgpt_web_headless` over Native Codex app-server; legacy `chatgpt_plan` is not a valid backend for new Web tasks. Keep real authorization, live inference and public HTTPS claims separate from package publication.
 
 ## Authority and scope
 

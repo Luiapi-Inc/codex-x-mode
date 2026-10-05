@@ -34,7 +34,7 @@ def main():
     setup.add_argument("--project", required=True)
     setup.add_argument("--cwd", required=True)
     setup.add_argument("--allow-write", action="store_true")
-    setup.add_argument("--model-version", help="Exact ChatGPT plan model slug to use when a web request omits model_version")
+    setup.add_argument("--model-version", help="Preferred packaged chatgpt-web alias to use when an entitled web request omits model_version")
     serve = commands.add_parser("serve")
     serve.add_argument("--port", type=int, default=8240)
     commands.add_parser("mcp-stdio")
@@ -69,7 +69,7 @@ def main():
                   "ext_agent_host_id": "urn:uuid:" + str(uuid.uuid4()),
                   "siwc_credentials_file": str(config_path.with_suffix(".siwc.json"))}
         if args.model_version is not None:
-            config["chatgpt_plan_default_model"] = args.model_version
+            config["chatgpt_web_default_model"] = args.model_version
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with config_path.open("x") as output:
             json.dump(config, output, indent=2)

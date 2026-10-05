@@ -52,14 +52,14 @@ def schema(base_url):
     add("/tasks", "post", "createCodexTask", "Start a user-authorized task in a configured project. Reuse request_key only for retries.",
         body_schema(["project_id", "prompt", "scope", "request_key"],
                     {"project_id": string, "prompt": string, "scope": {"type": "string", "enum": ["read-only", "workspace-write"]},
-                     "request_key": string, "model_version": {"type": "string", "description": "Exact ChatGPT-plan model slug returned by GET /models. Omission requires chatgpt_plan_default_model. Valid authorization/scopes and listed model are required before new queue acceptance. A retry recovers the original job first. Completed execution must report the exact model without reroute or remains unknown."}}), consequential=True, success=202)
+                     "request_key": string, "model_version": {"type": "string", "description": "Exact packaged chatgpt-web alias returned by GET /models, or family alias chatgpt-web. Omission/family requests use an entitled configured default when available, otherwise the highest-priority packaged+entitled alias. Valid authorization and account catalog visibility are required before queue acceptance. A retry recovers the original job first. Completed execution must report the exact underlying model without reroute or remains unknown."}}), consequential=True, success=202)
     add("/tasks/{id}", "get", "readCodexTask", "Read a task status and available evidence without sending another turn.", params=[job_param])
     add("/tasks/{id}/followups", "post", "continueCodexTask", "Send an explicitly authorized follow-up after the parent completes. Scope stays unchanged.",
         body_schema(["prompt", "request_key"], {"prompt": string, "request_key": string,
-                                                   "model_version": {"type": "string", "description": "Optional exact ChatGPT-plan model slug returned by GET /models; omission retains the parent's selected model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."}}), [job_param], True, success=202)
+                                                   "model_version": {"type": "string", "description": "Optional exact packaged chatgpt-web alias returned by GET /models; omission retains the parent's selected model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."}}), [job_param], True, success=202)
     add("/tasks/{id}/cancel", "post", "cancelCodexTask", "Cancel a queued task or request cancellation of a running task. Unknown execution remains fail-closed.",
         body_schema(["request_key"], {"request_key": string}), [job_param], True)
-    return {"openapi": "3.1.0", "info": {"title": "Codex X Mode Bridge", "version": "0.2.12"},
+    return {"openapi": "3.1.0", "info": {"title": "Codex X Mode Bridge", "version": "0.2.13"},
             "servers": [{"url": base_url.rstrip("/")}], "paths": paths,
             "security": [{"bearerAuth": []}],
             "components": {"securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}}}

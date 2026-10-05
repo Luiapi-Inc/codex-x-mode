@@ -1,13 +1,6 @@
 # Codex X Mode
 
-v0.2.12 moves Web-origin dispatch onto the Native Codex app-server path. Web
-model discovery is restricted to exact `chatgpt-web/*` IDs from Native Codex
-`model/list`; a selected model snapshot records its exact ID and supported/default
-reasoning effort before queue acceptance, and execution revalidates that snapshot
-before `thread/start`. A supported effort is sent explicitly on `turn/start`.
-New Web tasks never select `chatgpt_plan`; that path remains only for recovery
-of persisted pre-0.2.12 tasks. Exact-model acceptance remains fail-closed when
-terminal model identity is absent or a reroute is observed.
+v0.2.13 makes Web-origin dispatch headless and package-aware. Web model exposure is now the intersection of the packaged registry and the authorized ChatGPT account catalog. The packaged aliases currently include `chatgpt-web/5.5`, `chatgpt-web/5.6-luna`, and `chatgpt-web/5.6-sol`; models outside the packaged policy stay hidden even if the account can see them. A generic `chatgpt-web` request uses the configured default when that alias is entitled, otherwise it falls back to the highest-priority entitled packaged model. New Web tasks use the `chatgpt_web_headless` backend with Native Codex app-server execution and no Chromium, Playwright, browser profile, browser daemon, or second connector. Legacy `chatgpt_plan` handling remains only for persisted pre-v0.2.12 recovery. Exact terminal model identity remains fail-closed when absent or rerouted.
 
 Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP tools + bridge runtime** ไว้ใน package เดียว ไม่ต้องพึ่ง plugin หรือ skill อื่นเพื่อทำ Backend/Dispatch workflow หลัก
 
@@ -16,7 +9,7 @@ Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP
 | Backend | รับ model turn ที่ Codex local provider รอคำตอบอยู่ | `codex_x_claim_backend_turn` → `codex_x_read_backend_context` → `codex_x_complete_backend_turn` / `codex_x_cancel_backend_turn` |
 | Dispatch | ส่งงานที่ผู้ใช้อนุญาตให้ Codex ทำใน project allowlist | `codex_x_create_task` → `codex_x_read_task` → `codex_x_continue_task` / `codex_x_cancel_task` |
 
-มีทั้งหมด 13 tools พร้อม 2 resources และ 2 prompts. Web และ local stdio อ่าน model catalog จาก Native Codex app-server; Web surface filter เฉพาะ `chatgpt-web/*`. Catalog ไม่ยืนยัน inference entitlement; `inference_verified` ต้องมี completed turn และ terminal model identity ตรงกันโดยไม่มี reroute
+มีทั้งหมด 13 tools พร้อม 2 resources และ 2 prompts. Local stdio อ่าน model catalog จาก Native Codex app-server ตามปกติ ส่วน Web surface ใช้ packaged Web-model registry ตัดกับ catalog ของบัญชี ChatGPT ที่ authorize ผ่าน SIWC เพื่อ expose เฉพาะ alias ที่ package รองรับและบัญชีมีสิทธิ์. Package รุ่นถัดไปสามารถเพิ่ม model ใหม่ เช่น Pro ผ่าน registry โดยไม่แก้ routing core. Catalog visibility ยังไม่ใช่ inference proof; `inference_verified` ต้องมี completed turn และ terminal model identity ตรงกันโดยไม่มี reroute
 
 Web dispatch ผ่าน fixture/package validation แล้ว แต่ยังไม่ผ่าน clean-install self-contained acceptance หรือ real Web → Bridge → Native Codex → ChatGPT Web terminal verification. สถานะจึงยังใช้ `web_executor: implemented_unverified` และ `live_codex_verified=false`. การเลือก model ใน bridge ไม่เปลี่ยน model ของบทสนทนา ChatGPT และการอัปโหลด plugin ไม่ deploy bridge
 
@@ -84,10 +77,4 @@ python3 -m bridge schema --url https://YOUR-ACTUAL-BRIDGE-HOST --output openapi.
 
 ## Verification
 
-See `server/VALIDATION.md` for v0.2.12 package evidence. The bridge routing
-change is test-verified, but **architecture acceptance is not complete** until
-the headless Native Codex path is sufficient on a clean install without Chromium,
-Playwright, browser automation, or another connector, and a real Web → Bridge →
-Native Codex → `chatgpt-web/<version>` → ChatGPT Web terminal turn completes
-with exact model identity and no reroute. Package publication
-is separate from runtime deployment.
+See `server/VALIDATION.md` and `docs/evidence/2026-10-05-v0.2.13-headless.md` for v0.2.13 package evidence. Package/unit/integration validation and a live read-only account-catalog probe are green, but full architecture acceptance is still incomplete until a real harmless terminal task succeeds through the deployed Web connector with exact underlying model identity and no reroute. Mobile follows the same remote MCP/tunnel path and requires an actual ChatGPT Mobile smoke before being marked verified. Package publication is separate from runtime deployment.

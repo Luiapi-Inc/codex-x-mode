@@ -395,7 +395,10 @@ def authorization_status(config):
         credentials = get_credentials(config, refresh=False)
     except (SiwcError, OSError) as exc:
         message = str(exc)
-        return {"state": "authorization_required" if "authorization is required" in message or "run siwc-login" in message else "invalid",
+        needs_login = any(marker in message for marker in (
+            "authorization is required", "run siwc-login", "credential path is not configured"
+        ))
+        return {"state": "authorization_required" if needs_login else "invalid",
                 "message": message if isinstance(exc, SiwcError) else "Protected credentials are unavailable"}
     return {"state": "authorized" if credentials["expires_at"] > time.time() else "refresh_required", "expires_at": credentials.get("expires_at"),
             "client_id_present": bool(credentials.get("client_id")), "scopes_verified": True}

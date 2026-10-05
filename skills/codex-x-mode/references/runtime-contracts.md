@@ -37,13 +37,7 @@ the requested model and accepts a completed model identity only when the
 terminal event reports that exact model without reroute. An absent/mismatched
 identity leaves the execution `unknown`; it is not retried automatically.
 
-HTTP-origin tasks require SIWC authorization, granted plan scopes and an exact
-selected/configured model before queue acceptance. The server routes them to
-`chatgpt_plan`; local stdio routes to `codex_app_server`. Clients cannot choose
-the backend. Retries verify original input and recover the existing task before
-reading credentials or a changed catalog. Follow-ups retain the backend,
-registration and selected model. Workers revalidate account/catalog before
-child launch; legacy HTTP tasks with unknown origin are not executed.
+HTTP-origin tasks require SIWC authorization and a packaged Web-model alias that is visible in the authorized account catalog before queue acceptance. The server routes new Web tasks to `chatgpt_web_headless`; local stdio routes to `codex_app_server`. Generic `chatgpt-web` uses an entitled configured default when available, otherwise the highest-priority packaged+entitled alias. Clients cannot choose the backend. Retries verify original input and recover the existing task before reading credentials or a changed catalog. Follow-ups retain the backend, registration and selected model. Workers revalidate account/catalog before child launch; legacy HTTP tasks with unknown origin are not executed.
 Status reports `readiness.web_executor = "implemented_unverified"` and keeps
 live model/end-to-end verification unverified. Source tests use named fixtures.
 

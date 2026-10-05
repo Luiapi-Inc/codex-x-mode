@@ -15,9 +15,9 @@
         "category": "Productivity",
         "composerIcon": "./assets/icon.svg",
         "defaultPrompt": [
-          "ใช้ Codex X Mode แล้ว route จากเจตนาของฉันโดยอัตโนมัติ: status/read ใช้เครื่องมืออ่าน, งานใหม่สร้าง task, งานเดิมอ่าน/ทำต่อ/ยกเลิกตาม task ID, และ backend inference ต้องผูกกับ execution ที่ระบุ ห้ามถามให้เลือก Backend หรือ Dispatch",
-          "สร้างงานใหม่เพียงครั้งเดียว ใช้ project และ scope ตามคำขอ ใช้ read-only เป็นค่าเริ่มต้นเมื่อไม่ได้ขอแก้ไข ระบุ stable request_key และเก็บ task ID เพื่ออ่านผล",
-          "สำหรับ backend inference ให้ claim เฉพาะ turn ที่ผูกกับ Codex execution อ่าน context ให้ครบและตอบเฉพาะ request นั้น ห้ามสร้าง task ใหม่จาก backend turn"
+          "ตรวจสถานะหรืออ่านข้อมูลด้วย Codex X Mode และ route อัตโนมัติโดยไม่ถามให้เลือก Backend หรือ Dispatch",
+          "สร้างงาน Codex ครั้งเดียวตาม project/scope; ใช้ read-only ถ้าไม่ได้ขอแก้ไข และเก็บ task ID",
+          "ทำ backend inference เฉพาะ turn ที่ผูกกับ Codex execution; อ่าน context แล้วตอบ request นั้นโดยไม่สร้าง task ใหม่"
         ],
         "developerName": "Lui",
         "displayName": "Codex X Mode",
@@ -34,5 +34,5 @@
     "evidence"
   ],
   "name": "codex-x-mode",
-  "version": "0.2.12"
+  "version": "0.2.13"
 }

@@ -285,8 +285,8 @@ class DispatchDiagnosticsTests(unittest.TestCase):
                 "supported_reasoning_efforts": ["medium"],
             },
             {
-                "id": "chatgpt-web/fixture-model", "model": "chatgpt-web/fixture-model",
-                "display_name": "Fixture Web Model", "is_default": False,
+                "id": "gpt-5.6-sol", "model": "gpt-5.6-sol",
+                "display_name": "Headless Fixture Model", "is_default": False,
                 "default_reasoning_effort": "high",
                 "supported_reasoning_efforts": ["medium", "high"],
             },
@@ -464,13 +464,14 @@ class DispatchDiagnosticsTests(unittest.TestCase):
         self.assertFalse(selection["model_identity_verified"])
         self.assertFalse(selection["inference_verified"])
 
-    def test_status_does_not_claim_plan_authorization_or_live_inference(self):
+    def test_status_reports_headless_web_backend_without_live_claim(self):
         value = status(self.config, self.store)
         self.assertEqual(value["readiness"]["web_executor"], "implemented_unverified")
         self.assertEqual(value["execution_backends"]["local_stdio"], "codex_app_server")
-        self.assertEqual(value["execution_backends"]["web_http"], "codex_app_server")
+        self.assertEqual(value["execution_backends"]["web_http"], "chatgpt_web_headless")
         self.assertEqual(value["web_model_family"], "chatgpt-web")
-        self.assertEqual(value["chatgpt_plan_authorization"]["state"], "not_required")
+        self.assertFalse(value["web_browser_required"])
+        self.assertEqual(value["chatgpt_web_authorization"]["state"], "authorization_required")
         self.assertFalse(value["live_codex_verified"])
 
 
@@ -565,8 +566,14 @@ class HTTPTests(unittest.TestCase):
         self.config = {"gpt_key": "g" * 40, "provider_key": "p" * 40, "mcp_key": "m" * 40,
                        "projects": {"demo": {"cwd": str(root.resolve()), "allow_write": False}},
                        "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
-                       "chatgpt_web_default_model": "chatgpt-web/fixture-model",
+                       "chatgpt_web_default_model": "chatgpt-web/5.6-sol",
                        "backend_timeout_seconds": 2}
+        from tests.test_siwc import credentials
+        from tests.test_siwc_dispatch import ACCOUNT_CATALOG
+        auth = patch("bridge.siwc.get_credentials", return_value=credentials("fixture-host"))
+        catalog = patch("bridge.siwc.list_models", return_value=ACCOUNT_CATALOG)
+        auth.start(); catalog.start()
+        self.addCleanup(auth.stop); self.addCleanup(catalog.stop)
         self.server = Server(("127.0.0.1", 0), self.config, self.store, start_worker=False)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -620,7 +627,7 @@ class HTTPTests(unittest.TestCase):
 
     def test_web_catalog_unavailable_blocks_dispatch_but_preserves_project_reads(self):
         body = {"project_id": "demo", "prompt": "review", "scope": "read-only", "request_key": "no-catalog"}
-        with patch("bridge.service.codex_list_models", side_effect=OSError("fixture catalog unavailable")):
+        with patch("bridge.siwc.list_models", side_effect=OSError("fixture catalog unavailable")):
             self.assertEqual(self.request("GET", "/models")[0], 503)
             self.assertEqual(self.request("POST", "/tasks", body)[0], 503)
             self.assertEqual(self.request("GET", "/projects/demo/file?path=hello.txt")[0], 200)
@@ -678,7 +685,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(listed["result"]["resultType"], "complete")
         self.assertEqual(listed["result"]["ttlMs"], 0)
         self.assertEqual(listed["result"]["cacheScope"], "private")
-        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.12")
+        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.13")
 
         mismatch = dict(request)
         mismatch["id"] = 5

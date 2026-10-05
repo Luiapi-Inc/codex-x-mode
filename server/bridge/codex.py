@@ -108,24 +108,27 @@ class AppServer:
 
 
 def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_app_server", credentials=None):
-    if backend == "chatgpt_plan":
+    if backend in ("chatgpt_web_headless", "chatgpt_plan"):
         if credentials is None:
-            raise siwc.SiwcError("ChatGPT plan authorization is required")
+            raise siwc.SiwcError("Sign in with ChatGPT authorization is required")
         env = dict(os.environ)
         for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN"):
             env.pop(key, None)
         env["ACCESS_TOKEN"] = credentials["access_token"]
         command = config["codex_command"] + ["app-server", "--listen", "stdio://"]
+        # This is the official headless ChatGPT-plan Responses provider contract.
+        # `chatgpt_web_headless` is the Codex X Mode route name; no browser runtime
+        # or browser-only backend is involved.
         settings = {
-            "model_provider": '"openai_chatgpt_plan"',
-            "model_providers.openai_chatgpt_plan.name": '"ChatGPT plan"',
-            "model_providers.openai_chatgpt_plan.base_url": '"https://api.openai.com/v1"',
-            "model_providers.openai_chatgpt_plan.env_key": '"ACCESS_TOKEN"',
-            "model_providers.openai_chatgpt_plan.wire_api": '"responses"',
-            "model_providers.openai_chatgpt_plan.requires_openai_auth": "false",
-            "model_providers.openai_chatgpt_plan.supports_websockets": "false",
-            "model_providers.openai_chatgpt_plan.request_max_retries": "0",
-            "model_providers.openai_chatgpt_plan.stream_max_retries": "0",
+            "model_provider": '"openai_chatgpt_web_headless"',
+            "model_providers.openai_chatgpt_web_headless.name": '"ChatGPT Web headless"',
+            "model_providers.openai_chatgpt_web_headless.base_url": '"https://api.openai.com/v1"',
+            "model_providers.openai_chatgpt_web_headless.env_key": '"ACCESS_TOKEN"',
+            "model_providers.openai_chatgpt_web_headless.wire_api": '"responses"',
+            "model_providers.openai_chatgpt_web_headless.requires_openai_auth": "false",
+            "model_providers.openai_chatgpt_web_headless.supports_websockets": "false",
+            "model_providers.openai_chatgpt_web_headless.request_max_retries": "0",
+            "model_providers.openai_chatgpt_web_headless.stream_max_retries": "0",
             "shell_environment_policy": '{inherit="core",ignore_default_excludes=false,filters={ACCESS_TOKEN="exclude"},set={},experimental_use_profile=false}',
         }
         for key, value in settings.items():
@@ -215,7 +218,7 @@ def list_models(config, required_prefix=None):
     app = None
     try:
         app = _app_server(config, timeout=config.get("model_list_timeout_seconds", 60))
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.12"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.13"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
@@ -274,61 +277,74 @@ def run_task(config, store, job, stop=None):
         backend = payload.get("execution_backend", "codex_app_server")
         dispatch_origin = payload.get("dispatch_origin")
         if dispatch_origin is None:
-            # Legacy plan tasks are preserved only for reconciliation. New Web
-            # tasks always persist dispatch_origin at acceptance.
-            dispatch_origin = "web" if backend == "chatgpt_plan" else "local"
+            # Preserve legacy persisted tasks for reconciliation. New Web tasks
+            # always persist both origin and backend at acceptance.
+            dispatch_origin = "web" if backend in ("chatgpt_web_headless", "chatgpt_plan") else "local"
         if config.get("_dispatch_origin") == "web" and "execution_backend" not in payload:
             raise ModelSelectionError("Legacy task origin is unverified; reconcile it before web dispatch")
         phase = "validate_project"
         project = project_config(config, payload["project_id"], payload["scope"])
-        if backend == "chatgpt_plan":
-            # Backward-compatible execution/reconciliation path for persisted
-            # pre-0.2.12 tasks only. New acceptance never selects this backend.
-            phase = "chatgpt_plan_authorization"
+
+        if backend in ("chatgpt_web_headless", "chatgpt_plan"):
+            phase = "chatgpt_web_authorization"
             credentials = siwc.get_credentials(config)
             if payload.get("siwc_registration") != siwc.registration(credentials):
                 raise siwc.SiwcError("Task account registration no longer matches the authorized account")
-            phase = "model_catalog"
-            catalog = siwc.list_models(config, credentials=credentials)
+            phase = "account_model_catalog"
+            account_catalog = siwc.list_models(config, credentials=credentials)
             snapshot = payload.get("selected_model")
             if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
-                raise siwc.SiwcError("ChatGPT plan task has no validated model selection")
-            selected_model = siwc.select_model(catalog, snapshot["id"])
-            if selected_model["model"] != snapshot.get("model"):
-                raise siwc.SiwcError("Task model selection no longer matches the account catalog")
-            selected_model["source"] = snapshot["source"]
+                raise siwc.SiwcError("ChatGPT Web task has no validated model selection")
+            if backend == "chatgpt_web_headless":
+                alias = snapshot["id"]
+                if not alias.startswith("chatgpt-web/") or not isinstance(snapshot.get("model"), str):
+                    raise siwc.SiwcError("ChatGPT Web task has an invalid route model")
+                account_selected = siwc.select_model(account_catalog, snapshot["model"])
+            else:
+                # Legacy pre-0.2.13 task compatibility only.
+                account_selected = siwc.select_model(account_catalog, snapshot["id"])
+            if account_selected["model"] != snapshot.get("model"):
+                raise siwc.SiwcError("Task model selection no longer matches the authorized account catalog")
+            selected_model = dict(account_selected)
+            selected_model["id"] = snapshot["id"]
+            selected_model["source"] = snapshot.get("source", "requested")
+            selected_model["reasoning_effort"] = snapshot.get("reasoning_effort")
         elif backend != "codex_app_server":
             raise ModelSelectionError("Task execution backend is invalid")
 
         phase = "launch_app_server"
         launch_args = (config, config.get("task_timeout_seconds", 600), stop, lambda: store.cancel_requested(job["id"]))
-        app = (_app_server(*launch_args, backend=backend, credentials=credentials) if backend == "chatgpt_plan"
+        app = (_app_server(*launch_args, backend=backend, credentials=credentials)
+               if backend in ("chatgpt_web_headless", "chatgpt_plan")
                else _app_server(*launch_args, backend=backend))
         phase = "initialize"
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.12"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.13"}})
         app.send({"method": "initialized", "params": {}})
 
-        if backend == "codex_app_server":
+        if backend == "chatgpt_web_headless":
+            # The account catalog proves that the slug is listed for the signed-in
+            # account. Native Codex model/list supplies effort metadata for the
+            # same exact slug immediately before thread/start.
+            phase = "native_model_catalog"
+            try:
+                runtime_model = _select_model(
+                    _model_catalog(app),
+                    selected_model["model"],
+                    reasoning_effort=selected_model.get("reasoning_effort"),
+                )
+            except ModelSelectionError:
+                raise
+            except Exception as exc:
+                raise ModelSelectionError("Native Codex model catalog could not be verified") from exc
+            if runtime_model["model"] != selected_model["model"]:
+                raise ModelSelectionError("Headless Web model no longer matches the Native Codex catalog")
+            selected_model["reasoning_effort"] = runtime_model.get("reasoning_effort")
+            selected_model["default_reasoning_effort"] = runtime_model.get("default_reasoning_effort")
+            selected_model["supported_reasoning_efforts"] = runtime_model.get("supported_reasoning_efforts", [])
+        elif backend == "codex_app_server":
             phase = "model_catalog"
             try:
-                catalog = _model_catalog(app)
-                if dispatch_origin == "web":
-                    snapshot = payload.get("selected_model")
-                    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
-                        raise ModelSelectionError("Web task has no validated model selection")
-                    selected_model = _select_model(
-                        catalog,
-                        snapshot["id"],
-                        required_prefix="chatgpt-web/",
-                        reasoning_effort=snapshot.get("reasoning_effort"),
-                    )
-                    if selected_model["model"] != snapshot.get("model"):
-                        raise ModelSelectionError("Web task model selection no longer matches the Native Codex catalog")
-                    if selected_model.get("reasoning_effort") != snapshot.get("reasoning_effort"):
-                        raise ModelSelectionError("Web task reasoning effort no longer matches the accepted model snapshot")
-                    selected_model["source"] = snapshot.get("source", "requested")
-                else:
-                    selected_model = _select_model(catalog, payload.get("model_version"))
+                selected_model = _select_model(_model_catalog(app), payload.get("model_version"))
             except ModelSelectionError:
                 raise
             except Exception as exc:
@@ -340,8 +356,8 @@ def run_task(config, store, job, stop=None):
             "sandbox": "read-only" if payload["scope"] == "read-only" else "workspace-write",
             "model": selected_model["model"],
         }
-        if backend == "chatgpt_plan":
-            thread_params["modelProvider"] = "openai_chatgpt_plan"
+        if backend in ("chatgpt_web_headless", "chatgpt_plan"):
+            thread_params["modelProvider"] = "openai_chatgpt_web_headless"
         parent_id = payload.get("parent_task_id")
         if parent_id:
             thread_params["threadId"] = store.get(parent_id, "task")["thread_id"]
@@ -397,11 +413,12 @@ def run_task(config, store, job, stop=None):
                                           "model_selection": {
                                               "backend": backend,
                                               "dispatch_origin": dispatch_origin,
-                                              "catalog_source": "responses_api_models" if backend == "chatgpt_plan" else "model/list",
+                                              "catalog_source": "responses_api_models" if backend in ("chatgpt_web_headless", "chatgpt_plan") else "model/list",
                                               "id": selected_model["id"],
                                               "model": selected_model["model"],
                                               "source": selected_model["source"],
                                               "reasoning_effort": selected_model.get("reasoning_effort"),
+                                              "supported_reasoning_efforts": selected_model.get("supported_reasoning_efforts", []),
                                               "catalog_integrity_verified": True,
                                               "explicitly_sent": True,
                                               "observed_model": observed_model,

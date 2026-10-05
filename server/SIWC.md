@@ -44,9 +44,7 @@ or public logs. Retain protected runtime files across restarts.
 Read the active backend's catalog through GET /models or codex_x_list_models.
 HTTP uses the same account token for catalog and child inference. Only
 visibility=list slugs can be selected; display names are presentation labels.
-Send model_version as an exact slug. Omission requires
-chatgpt_plan_default_model in private config (or setup --model-version SLUG);
-there is no implicit web default or fallback to API-key billing.
+Send `model_version` as an exact packaged `chatgpt-web/*` alias, or use the family alias `chatgpt-web`. The private config key `chatgpt_web_default_model` (or `setup --model-version ALIAS`) is preferred when that alias is entitled; otherwise the bridge deterministically falls back to the highest-priority packaged alias visible in the authorized account catalog. There is no API-key billing fallback.
 
 New task acceptance snapshots the selected model and issued account/client
 identity, without tokens. A repeated request_key first recovers that snapshot

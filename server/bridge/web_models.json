@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "chatgpt-web/5.5",
+      "slug": "gpt-5.5",
+      "display_name": "GPT-5.5",
+      "priority": 100
+    },
+    {
+      "id": "chatgpt-web/5.6-luna",
+      "slug": "gpt-5.6-luna",
+      "display_name": "GPT-5.6 Luna",
+      "priority": 200
+    },
+    {
+      "id": "chatgpt-web/5.6-sol",
+      "slug": "gpt-5.6-sol",
+      "display_name": "GPT-5.6 Sol",
+      "priority": 300
+    }
+  ]
+}

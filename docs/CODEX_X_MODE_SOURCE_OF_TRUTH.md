@@ -1,102 +1,122 @@
-# Codex X Mode — Source of Truth
+# Codex X Mode Source of Truth
 
 Date: 2026-10-05
-Status: Authoritative architecture checkpoint
+Status: Authoritative architecture checkpoint for v0.2.13
 
 ## Required execution path
 
-Web-originated dispatch MUST use:
+Web-originated dispatch MUST use the headless path:
 
 ```text
-ChatGPT Web
+ChatGPT Web / Mobile
+  -> Codex X Mode connector / MCP transport
+  -> secure tunnel
   -> Codex X Mode bridge
   -> Native Codex app-server
-  -> exact chatgpt-web/<selected-version>
-  -> ChatGPT Web backend
+  -> exact underlying ChatGPT model
+  -> terminal result back through Codex X Mode
 ```
 
-Do not map Web-originated work to `chatgpt_plan`.
-Do not silently substitute `gpt-6-astra` or another non-`chatgpt-web/*` model.
+Do not use Chromium, Playwright, DOM automation, a browser profile, browser daemon, or a second connector in the primary path.
+
+Do not route new Web-originated work through legacy `chatgpt_plan`. That backend exists only for reconciliation of persisted pre-v0.2.12 tasks.
 
 ## Headless-first runtime contract
 
-The primary execution path MUST NOT require Chromium, Playwright, browser automation, DOM scraping, browser profiles, or a separate browser daemon/connector. Codex X Mode should remain idle-light: the bridge/tunnel may stay resident, while Native Codex child processes are created only when work requires them and terminate when the task completes.
+Codex X Mode should remain idle-light. The resident runtime should be limited to the bridge and tunnel/client process required for remote access. Native Codex child processes should be started on demand and terminated when the task finishes or reaches a terminal/unknown state.
 
-A browser-based compatibility path may exist only as an explicitly optional, non-default adapter after the headless Native Codex path has passed clean-install acceptance. It must never be required for normal Web-origin execution.
+Browser compatibility may exist later only as an optional non-default adapter. It must never be required for normal Web or Mobile execution.
 
 ## Model/version contract
 
-`chatgpt-web` is a family prefix. A concrete model version must be selectable from Native Codex `model/list`.
+`chatgpt-web` is the public model family exposed by Codex X Mode. Concrete aliases are owned by the package, not copied blindly from every model visible to the account.
 
-Observed catalog examples:
+Current packaged registry:
 
-- `chatgpt-web/gpt-5.6-sol`: default effort `high`; supported observed efforts `medium`, `high`.
-- `chatgpt-web/gpt-5.6-sol-instant`: default effort `low`.
+- `chatgpt-web/5.5` -> `gpt-5.5`
+- `chatgpt-web/5.6-luna` -> `gpt-5.6-luna`
+- `chatgpt-web/5.6-sol` -> `gpt-5.6-sol`
 
-Web-origin model discovery must expose exact `chatgpt-web/*` IDs from Native Codex. The bridge must preserve default/supported reasoning-effort metadata and explicitly send a supported effort to `turn/start`. It must not inherit an incompatible global value such as `model_reasoning_effort=max`.
+Visible models are the intersection:
 
-Any reroute away from the selected exact model is an acceptance failure.
+```text
+packaged model registry ∩ authorized ChatGPT account catalog
+```
+
+This gives package-aware and entitlement-aware behavior without hard-coding plan names:
+
+- a Free/Go-like account that has Luna but not Sol sees/uses Luna;
+- a paid account that has Sol sees/uses Sol;
+- a future package can add a Pro alias in the registry without changing routing core; it appears only when the authorized account catalog also contains the mapped model.
+
+Generic `chatgpt-web` resolution is deterministic:
+
+1. use `chatgpt_web_default_model` if that alias is both packaged and entitled;
+2. otherwise choose the highest-priority packaged alias that is entitled;
+3. fail closed when the account has no package-supported model.
+
+Explicit aliases outside the package registry are rejected even if the upstream account catalog contains them.
+
+At execution time the selected alias is resolved to one exact underlying model slug. Native Codex app-server model metadata is used to validate the execution model and reasoning-effort contract. Terminal completion is not accepted as exact-model evidence when terminal model identity is absent or a reroute is observed.
 
 ## Self-contained project boundary
 
 Codex X Mode runtime MUST NOT require another ChatGPT Plugin, external Tool, external Skill, or external MCP package as a product dependency.
 
-Everything required by Codex X Mode must live in and ship from this repository, including its Skill, MCP server/client surfaces, bridge, model-routing adapter, validation scripts, acceptance workflow, deployment metadata, and recovery documentation.
+Everything required by Codex X Mode must live in and ship from this repository, including its Skill, MCP surfaces, bridge, model registry/routing logic, validation scripts, acceptance workflow, deployment metadata, and recovery documentation.
 
-Platform primitives explicitly required by the architecture (Native Codex and ChatGPT Web transport) are allowed. Development/operator tools used to edit or inspect the repository are not runtime dependencies.
+Platform primitives explicitly required by the architecture are allowed: ChatGPT account authorization/catalog access, Native Codex app-server, and the secure transport/tunnel used to reach the user-owned bridge.
 
-Do not solve a missing capability by adding another Plugin/Skill dependency. Implement or vendor the capability in this repository with appropriate provenance/license.
+Development/operator tools used to edit or inspect the repository are not runtime dependencies. Plugin Autopilot is development-only and must not be shipped as a Codex X Mode runtime dependency.
+
+## Web and Mobile contract
+
+Web and Mobile use the same remote MCP/tunnel path. Mobile does not run Python, Node, Codex, Chromium, or tunnel-client locally; it is only the ChatGPT client surface. The execution host runs the bridge and Native Codex.
+
+Mobile availability therefore depends on the execution host/tunnel being reachable. A Mac-hosted deployment requires the Mac to be awake and online. A future always-on host may move the same runtime to a small server/VPS without changing the Mobile client contract.
+
+Mobile must not be marked verified until an actual ChatGPT Mobile smoke test completes through the deployed connector. Architectural compatibility alone is not evidence of Mobile acceptance.
 
 ## Established evidence
 
-- Native Codex `model/list` exposed exact `chatgpt-web/*` IDs.
-- A direct Native Codex probe of `chatgpt-web/gpt-5.6-sol` with `effort=high` completed successfully.
-- A prior Web-model task failed when `model_reasoning_effort=max` was inherited, proving effort must be selected from model metadata.
-- v0.2.11 reached real `thread/start`/`turn/start`, but its Web-origin backend selection still uses `chatgpt_plan`.
+- Headless Native Codex + SIWC/account authorization returned live account model catalog data with no browser process required.
+- Live read-only v0.2.13 probe exposed only packaged+entitled aliases: `chatgpt-web/5.5`, `chatgpt-web/5.6-luna`, and `chatgpt-web/5.6-sol`.
+- The same live probe resolved generic `chatgpt-web` to `chatgpt-web/5.6-sol` on the current entitled account, mapping to `gpt-5.6-sol` with `browser_required=false`.
+- Regression coverage proves Free-like catalog fallback to Luna, paid/default behavior for Sol, future package registry extension for Pro without routing-core changes, exact alias rejection, dedup/retry invariants, and fail-closed terminal identity.
+- v0.2.13 package/full test suite: 94/94 PASS after deterministic runtime bundle rebuild.
+- Current runtime bundle SHA-256: `a66f774ae888de457b211045dc0c04ecc48f02f174071d7262a0f2c91a823246`.
 
-The direct probe proves only the lower model-routing leg. It is not full E2E acceptance.
+These prove package logic and the account-catalog leg. They do not yet prove a full deployed Web or Mobile terminal task.
 
 ## Current state
 
-This repository is bootstrapped from the exact v0.2.11 package archive previously deployed/tested.
+v0.2.13 source is implemented on branch `feat/headless-web-route` and remains `live_codex_verified=false` until real deployed E2E evidence exists.
 
-v0.2.11 is a reference checkpoint only. It is NOT architecture acceptance because Web-origin dispatch still routes to `chatgpt_plan`.
-
-## Next implementation
-
-The next release must:
-
-1. Route Web-origin dispatch through `codex_app_server`.
-2. Discover/filter exact `chatgpt-web/*` models from Native Codex `model/list`.
-3. Select the requested exact version without substitution.
-4. Carry selected-model default/supported reasoning effort.
-5. Send a valid effort explicitly on `turn/start`.
-6. Capture requested/selected model and reroute evidence.
-7. Preserve ambiguous/unknown task safety; never replay uncertain `turn/start`.
-8. Add regression tests for backend, family filtering, version, effort, reroute handling, and follow-up invariants.
-9. Prove a real harmless read-only E2E: ChatGPT Web -> Bridge -> Native Codex -> chatgpt-web/<version> -> ChatGPT Web.
-10. Ship as a new semver release (`>=0.2.12`); never overwrite `0.2.11`.
+The previous v0.2.12 Native-Codex-only catalog assumption is superseded by the v0.2.13 package-registry + account-catalog design because raw Native Codex did not expose `chatgpt-web/*` aliases when the external route/browser helper was absent.
 
 ## Acceptance gates
 
-PASS requires evidence for all of:
+Full architecture PASS requires evidence for all of:
 
-- exact Web model versions exposed from live Native Codex catalog
-- exact requested version selected
-- backend = `codex_app_server`
-- valid effort selected from model metadata and sent to Native Codex
-- no reroute
-- real read-only E2E terminal success
-- targeted + full tests green
-- package/build validation green
-- release/runtime hashes recorded
-- deployed version aligned across manifest, server, runtime, MCP config
-- health/status good
-- clean-install proof that no external Plugin/Skill/MCP package is required by Codex X Mode runtime
+- package registry contains only intended public aliases;
+- visible catalog equals package policy ∩ authorized account catalog;
+- generic `chatgpt-web` resolves deterministically to an entitled packaged alias;
+- exact underlying model slug is pinned without substitution;
+- valid reasoning effort is selected from execution-model metadata and sent to Native Codex;
+- no reroute;
+- real harmless read-only Web -> Bridge -> Native Codex -> ChatGPT backend terminal success;
+- targeted + full tests green;
+- package/build validation green;
+- release/runtime hashes recorded;
+- deployed version aligned across manifest, server, runtime, MCP config;
+- health/status good;
+- clean-install proof that no external Plugin/Skill/MCP package is required by the runtime;
+- actual ChatGPT Mobile smoke before Mobile is marked verified.
 
 ## Safety
 
 - Never replay an ambiguous `turn/start`.
 - Preserve unknown tasks for reconciliation evidence.
 - Keep credentials/tokens/tunnel keys/runtime databases outside Git.
+- Never expose account tokens in logs or evidence.
 - Prefer smallest safe changes and versioned releases.

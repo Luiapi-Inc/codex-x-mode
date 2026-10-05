@@ -267,3 +267,30 @@ Source: current account release pluginrel_6ac1eb5140e481919a61778795235240 (0.2.
   headless Native Codex route works without Chromium, Playwright, browser automation,
   a browser profile/daemon, or a second connector. Real Web → Bridge → Native Codex →
   ChatGPT Web exact-terminal-model acceptance is therefore still **NOT PROVEN**.
+
+## v0.2.13 headless package/model-registry verification (2026-10-05)
+
+- New Web tasks use product-facing backend `chatgpt_web_headless`; browser runtime is
+  explicitly not required. Legacy `chatgpt_plan` remains only for persisted old-task
+  reconciliation.
+- Web model policy is package-owned in `bridge/web_models.json`. Visible aliases equal
+  the intersection of the packaged registry and the authorized ChatGPT account catalog.
+- Current packaged aliases are `chatgpt-web/5.5`, `chatgpt-web/5.6-luna`, and
+  `chatgpt-web/5.6-sol`. Upstream account models outside that package policy remain hidden.
+- Generic `chatgpt-web` uses an entitled configured default when available; otherwise
+  it falls back deterministically to the highest-priority entitled packaged alias.
+- Regression coverage proves Free-like fallback to Luna, paid/default Sol behavior,
+  exact alias rejection, duplicate/retry stability, terminal model identity fail-closed,
+  and future package addition of a Pro alias without changing routing core.
+- Headless live read-only account-catalog probe returned packaged+entitled aliases
+  `5.5`, `5.6-luna`, and `5.6-sol`; generic `chatgpt-web` resolved to
+  `chatgpt-web/5.6-sol` -> `gpt-5.6-sol` with `browser_required=false`.
+- Focused Web/model-policy suite: **12/12 PASS**.
+- `python3 -B -m compileall -q server/bridge server/tests server/scripts`: **PASS**.
+- `python3 -B -m unittest discover -s tests -v`: **94/94 PASS**, exit 0 after
+  rebuilding the deterministic runtime bundle.
+- Final runtime bundle SHA-256 is recorded in the external release evidence file `docs/evidence/2026-10-05-v0.2.13-headless.md`; it is intentionally not embedded here because this validation file is itself part of the bundle.
+- Mobile uses the same remote MCP/tunnel path architecturally, but an actual ChatGPT
+  Mobile app smoke has **NOT YET BEEN RUN** and must not be reported as verified.
+- Full deployed Web terminal-task acceptance is also still **NOT PROVEN**; keep
+  `live_codex_verified=false` until exact terminal-model evidence exists.
