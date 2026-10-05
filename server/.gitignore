@@ -1,0 +1,8 @@
+__pycache__/
+bridge-private.json
+*.siwc.json
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.lock
+openapi.json

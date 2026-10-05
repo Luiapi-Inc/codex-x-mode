@@ -1,0 +1,14 @@
+.DS_Store
+.serena/
+__pycache__/
+*.py[cod]
+*.lock
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+bridge-private.json
+*.siwc.json
+.env
+.env.*
+!.env.example
+codex-x-mode-v*-update.zip

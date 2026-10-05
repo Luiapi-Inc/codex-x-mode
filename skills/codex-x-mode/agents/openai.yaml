@@ -1,0 +1,8 @@
+interface:
+  display_name: Codex X Mode
+  short_description: Self-contained Codex backend and dispatch
+  default_prompt: Use $codex-x-mode with its bundled MCP tools to handle this Codex request and choose Backend or Dispatch without relying on another plugin or skill.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,596 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Codex X Mode Bridge",
+    "version": "0.2.11"
+  },
+  "servers": [
+    {
+      "url": "https://bridge.example.invalid"
+    }
+  ],
+  "paths": {
+    "/status": {
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Read bridge capability and recovery status.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "summary": "List configured projects and whether writes are allowed.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/models": {
+      "get": {
+        "operationId": "listModels",
+        "summary": "Read token-scoped listed ChatGPT-plan models for web dispatch; SIWC authorization is required. Listing does not prove inference entitlement or change the current ChatGPT conversation model.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/directory": {
+      "get": {
+        "operationId": "listProjectDirectory",
+        "summary": "List a directory inside an allowlisted project without escaping its root.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "."
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            }
+          }
+        ]
+      }
+    },
+    "/projects/{project_id}/file": {
+      "get": {
+        "operationId": "readProjectFile",
+        "summary": "Read one UTF-8 text file inside an allowlisted project.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048576,
+              "default": 262144
+            }
+          }
+        ]
+      }
+    },
+    "/backend/claim": {
+      "post": {
+        "operationId": "claimBackendTurn",
+        "summary": "Claim one pending Codex model request. Retry the same request_key to recover the exact same turn or null result after response loss.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request_key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "request_key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backend/{id}/context": {
+      "get": {
+        "operationId": "readBackendContext",
+        "summary": "Read a lease-bound context chunk. Continue until next_offset is null.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lease",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/backend/{id}/complete": {
+      "post": {
+        "operationId": "completeBackendTurn",
+        "summary": "Return an answer or offered tool calls to the waiting Codex client.",
+        "x-openai-isConsequential": true,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "lease",
+                  "request_key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "lease": {
+                    "type": "string"
+                  },
+                  "request_key": {
+                    "type": "string"
+                  },
+                  "answer": {
+                    "type": "string"
+                  },
+                  "calls": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "input"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "input": {
+                          "type": "string",
+                          "description": "JSON object string for function tools; raw input for custom tools."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/backend/{id}/cancel": {
+      "post": {
+        "operationId": "cancelBackendTurn",
+        "summary": "Cancel a claimed backend turn. Retry with the same request_key for idempotent recovery.",
+        "x-openai-isConsequential": true,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "lease",
+                  "request_key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "lease": {
+                    "type": "string"
+                  },
+                  "request_key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/tasks": {
+      "post": {
+        "operationId": "createCodexTask",
+        "summary": "Start a user-authorized task in a configured project. Reuse request_key only for retries.",
+        "x-openai-isConsequential": true,
+        "responses": {
+          "202": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "project_id",
+                  "prompt",
+                  "scope",
+                  "request_key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "project_id": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "read-only",
+                      "workspace-write"
+                    ]
+                  },
+                  "request_key": {
+                    "type": "string"
+                  },
+                  "model_version": {
+                    "type": "string",
+                    "description": "Exact ChatGPT-plan model slug returned by GET /models. Omission requires chatgpt_plan_default_model. Valid authorization/scopes and listed model are required before new queue acceptance. A retry recovers the original job first. Completed execution must report the exact model without reroute or remains unknown."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}": {
+      "get": {
+        "operationId": "readCodexTask",
+        "summary": "Read a task status and available evidence without sending another turn.",
+        "x-openai-isConsequential": false,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/tasks/{id}/followups": {
+      "post": {
+        "operationId": "continueCodexTask",
+        "summary": "Send an explicitly authorized follow-up after the parent completes. Scope stays unchanged.",
+        "x-openai-isConsequential": true,
+        "responses": {
+          "202": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt",
+                  "request_key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "request_key": {
+                    "type": "string"
+                  },
+                  "model_version": {
+                    "type": "string",
+                    "description": "Optional exact ChatGPT-plan model slug returned by GET /models; omission retains the parent's selected model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/tasks/{id}/cancel": {
+      "post": {
+        "operationId": "cancelCodexTask",
+        "summary": "Cancel a queued task or request cancellation of a running task. Unknown execution remains fail-closed.",
+        "x-openai-isConsequential": true,
+        "responses": {
+          "200": {
+            "description": "Current result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request_key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "request_key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "apps": "./.app.json",
+  "interface": {
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "category": "Productivity",
+    "composerIcon": "./assets/icon.svg",
+    "defaultPrompt": [
+      "\u0e43\u0e0a\u0e49 Codex X Mode \u0e41\u0e25\u0e49\u0e27 route \u0e08\u0e32\u0e01\u0e40\u0e08\u0e15\u0e19\u0e32\u0e02\u0e2d\u0e07\u0e09\u0e31\u0e19\u0e42\u0e14\u0e22\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34: status/read \u0e43\u0e0a\u0e49\u0e40\u0e04\u0e23\u0e37\u0e48\u0e2d\u0e07\u0e21\u0e37\u0e2d\u0e2d\u0e48\u0e32\u0e19, \u0e07\u0e32\u0e19\u0e43\u0e2b\u0e21\u0e48\u0e2a\u0e23\u0e49\u0e32\u0e07 task, \u0e07\u0e32\u0e19\u0e40\u0e14\u0e34\u0e21\u0e2d\u0e48\u0e32\u0e19/\u0e17\u0e33\u0e15\u0e48\u0e2d/\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e15\u0e32\u0e21 task ID, \u0e41\u0e25\u0e30 backend inference \u0e15\u0e49\u0e2d\u0e07\u0e1c\u0e39\u0e01\u0e01\u0e31\u0e1a execution \u0e17\u0e35\u0e48\u0e23\u0e30\u0e1a\u0e38 \u0e2b\u0e49\u0e32\u0e21\u0e16\u0e32\u0e21\u0e43\u0e2b\u0e49\u0e40\u0e25\u0e37\u0e2d\u0e01 Backend \u0e2b\u0e23\u0e37\u0e2d Dispatch",
+      "\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e07\u0e32\u0e19\u0e43\u0e2b\u0e21\u0e48\u0e40\u0e1e\u0e35\u0e22\u0e07\u0e04\u0e23\u0e31\u0e49\u0e07\u0e40\u0e14\u0e35\u0e22\u0e27 \u0e43\u0e0a\u0e49 project \u0e41\u0e25\u0e30 scope \u0e15\u0e32\u0e21\u0e04\u0e33\u0e02\u0e2d \u0e43\u0e0a\u0e49 read-only \u0e40\u0e1b\u0e47\u0e19\u0e04\u0e48\u0e32\u0e40\u0e23\u0e34\u0e48\u0e21\u0e15\u0e49\u0e19\u0e40\u0e21\u0e37\u0e48\u0e2d\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e02\u0e2d\u0e41\u0e01\u0e49\u0e44\u0e02 \u0e23\u0e30\u0e1a\u0e38 stable request_key \u0e41\u0e25\u0e30\u0e40\u0e01\u0e47\u0e1a task ID \u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e2d\u0e48\u0e32\u0e19\u0e1c\u0e25",
+      "\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a backend inference \u0e43\u0e2b\u0e49 claim \u0e40\u0e09\u0e1e\u0e32\u0e30 turn \u0e17\u0e35\u0e48\u0e1c\u0e39\u0e01\u0e01\u0e31\u0e1a Codex execution \u0e2d\u0e48\u0e32\u0e19 context \u0e43\u0e2b\u0e49\u0e04\u0e23\u0e1a\u0e41\u0e25\u0e30\u0e15\u0e2d\u0e1a\u0e40\u0e09\u0e1e\u0e32\u0e30 request \u0e19\u0e31\u0e49\u0e19 \u0e2b\u0e49\u0e32\u0e21\u0e2a\u0e23\u0e49\u0e32\u0e07 task \u0e43\u0e2b\u0e21\u0e48\u0e08\u0e32\u0e01 backend turn"
+    ],
+    "developerName": "Lui",
+    "displayName": "Codex X Mode",
+    "logo": "./assets/icon.svg",
+    "longDescription": "Self-contained Codex backend and dispatch workflow with bundled MCP tools for status, scoped project reads, task lifecycle, and backend turn lifecycle. Preserves authorization, idempotency, recovery, task identity, and evidence without requiring another plugin or skill. Includes a local stdio MCP server and an authenticated HTTP MCP/Actions bridge implementation.",
+    "shortDescription": "Codex backend & dispatch"
+  },
+  "name": "codex-x-mode",
+  "version": "0.2.11",
+  "description": "Self-contained Codex dispatch and backend-turn bridge with exact dispatch model selection, scoped project reads, recovery, and reproducible evidence.",
+  "author": {
+    "name": "Lui"
+  },
+  "keywords": [
+    "codex",
+    "backend",
+    "dispatch",
+    "evidence"
+  ],
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json"
+}
