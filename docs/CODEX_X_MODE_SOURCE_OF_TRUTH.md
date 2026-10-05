@@ -93,7 +93,7 @@ These prove package logic, the account-catalog leg, and that the headless route 
 
 ## Current state
 
-v0.2.14 source is implemented on branch `feat/headless-web-route` and remains `live_codex_verified=false` until a real deployed terminal task succeeds with exact model identity and no reroute. The currently deployed runtime/plugin remain v0.2.13 until this v0.2.14 checkpoint is committed, pushed, deployed, and published.
+v0.2.14 is committed on branch `feat/headless-web-route`, deployed on the Mac runtime, exposed by the MCP server, and published to the private ChatGPT plugin surface. `live_codex_verified` remains false until a real deployed terminal task succeeds with exact model identity and no reroute.
 
 The previous v0.2.12 Native-Codex-only catalog assumption is superseded by the v0.2.13 package-registry + account-catalog design because raw Native Codex did not expose `chatgpt-web/*` aliases when the external route/browser helper was absent.
 
