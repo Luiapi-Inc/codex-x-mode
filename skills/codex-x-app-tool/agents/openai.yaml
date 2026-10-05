@@ -1,0 +1,14 @@
+interface:
+  display_name: "Codex X App Tool"
+  short_description: "Native Codex thread tools"
+  default_prompt: "Use $codex-x-app-tool to manage Native Codex threads through the bundled codex-x-app MCP tools."
+policy:
+  products:
+    - CHAT
+    - CODEX
+  allow_implicit_invocation: true
+dependencies:
+  tools:
+    - type: mcp
+      value: codex-x-app
+      description: "Native Codex thread orchestration provided by the bundled Codex X App MCP surface."

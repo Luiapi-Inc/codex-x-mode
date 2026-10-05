@@ -1,5 +1,4 @@
 import ast
-import ast
 import json
 import tarfile
 import tomllib
@@ -16,7 +15,7 @@ class VersionConsistencyTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         manifest = json.loads((root / "plugin.json").read_text())
         version = manifest["version"]
-        self.assertEqual(version, "0.2.20")
+        self.assertEqual(version, "0.2.21")
         self.assertEqual(json.loads((root / ".codex-plugin/plugin.json").read_text())["version"], version)
         self.assertEqual(tomllib.loads((root / "server/pyproject.toml").read_text())["project"]["version"], version)
         self.assertEqual(SERVER_INFO["version"], version)
@@ -66,3 +65,27 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertIn("name: codex-x-app-tool", text)
         self.assertIn("codex-cli 0.160.1", text)
         self.assertIn("Do not require or invoke the external `codex-app-tools@openai-bundled` package at runtime.", text)
+
+        agent = root / "skills/codex-x-app-tool/agents/openai.yaml"
+        self.assertTrue(agent.is_file())
+        agent_text = agent.read_text()
+        self.assertIn('display_name: "Codex X App Tool"', agent_text)
+        self.assertIn("- CHAT", agent_text)
+        self.assertIn("- CODEX", agent_text)
+        self.assertIn("type: mcp", agent_text)
+        self.assertIn("value: codex-x-app", agent_text)
+        self.assertNotIn("codex-app-tools@openai-bundled", agent_text)
+
+    def test_current_model_contract_is_native_codex_owned(self):
+        root = Path(__file__).resolve().parents[2]
+        runtime_contract = (root / "skills/codex-x-mode/references/runtime-contracts.md").read_text()
+        source_of_truth = (root / "docs/CODEX_X_MODE_SOURCE_OF_TRUTH.md").read_text()
+
+        self.assertIn("Native Codex app-server `model/list`", runtime_contract)
+        self.assertIn("Native Codex `model/list` visibility", runtime_contract)
+        self.assertNotIn("authorized ChatGPT account catalog", runtime_contract)
+        self.assertNotIn("account registration", runtime_contract)
+        self.assertNotIn("api.openai.com/v1/models", runtime_contract)
+
+        self.assertIn("packaged model registry ∩ Native Codex model/list for the signed-in account", source_of_truth)
+        self.assertNotIn("packaged model registry ∩ authorized ChatGPT account catalog", source_of_truth)

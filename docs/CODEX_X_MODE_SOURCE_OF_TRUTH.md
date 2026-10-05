@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
-Date: 2026-10-05
-Status: Authoritative architecture checkpoint for v0.2.20 candidate
+Date: 2026-10-06
+Status: Authoritative architecture checkpoint for v0.2.21 candidate
 
 ## Required execution path
 
@@ -58,22 +58,22 @@ Current packaged registry:
 Visible models are the intersection:
 
 ```text
-packaged model registry ∩ authorized ChatGPT account catalog
+packaged model registry ∩ Native Codex model/list for the signed-in account
 ```
 
-This gives package-aware and entitlement-aware behavior without hard-coding plan names:
+This gives package-aware and account-aware behavior without hard-coding plan names or calling a partner-app catalog:
 
-- a Free/Go-like account that has Luna but not Sol sees/uses Luna;
-- a paid account that has Sol sees/uses Sol;
-- a future package can add a Pro alias in the registry without changing routing core; it appears only when the authorized account catalog also contains the mapped model.
+- an account for which Native Codex exposes Luna but not Sol sees/uses Luna;
+- an account for which Native Codex exposes Sol sees/uses Sol;
+- a future package can add a Pro alias in the registry without changing routing core; it appears only when Native Codex `model/list` contains the mapped model.
 
 Generic `chatgpt-web` resolution is deterministic:
 
-1. use `chatgpt_web_default_model` if that alias is both packaged and entitled;
-2. otherwise choose the highest-priority packaged alias that is entitled;
-3. fail closed when the account has no package-supported model.
+1. use `chatgpt_web_default_model` if that alias is packaged and visible in Native Codex;
+2. otherwise choose the highest-priority packaged alias visible in Native Codex;
+3. fail closed when Native Codex exposes no package-supported model.
 
-Explicit aliases outside the package registry are rejected even if the upstream account catalog contains them.
+Explicit aliases outside the package registry are rejected even if Native Codex exposes them.
 
 At execution time the selected alias is resolved to one exact underlying model slug. Native Codex app-server model metadata is used to validate the execution model and reasoning-effort contract. Terminal completion is not accepted as exact-model evidence when terminal model identity is absent or a reroute is observed.
 
@@ -83,7 +83,7 @@ Codex X Mode runtime MUST NOT require another ChatGPT Plugin, external Tool, ext
 
 Everything required by Codex X Mode must live in and ship from this repository, including its Skill, MCP surfaces, bridge, model registry/routing logic, validation scripts, acceptance workflow, deployment metadata, and recovery documentation.
 
-Platform primitives explicitly required by the architecture are allowed: ChatGPT account authorization/catalog access, Native Codex app-server, and the secure transport/tunnel used to reach the user-owned bridge.
+Platform primitives explicitly required by the architecture are allowed: ChatGPT account authentication as consumed by Native Codex, Native Codex app-server/model discovery, and the secure transport/tunnel used to reach the user-owned bridge. Codex X Mode itself must not source new-work entitlement from a separate SIWC/partner-app catalog.
 
 Development/operator tools used to edit or inspect the repository are not runtime dependencies. Plugin Autopilot is development-only and must not be shipped as a Codex X Mode runtime dependency.
 
@@ -103,6 +103,8 @@ The protocol baseline for this release is **Codex CLI 0.160.1**. `codex-x-app` a
 - `wait_threads`
 
 `automation_update`, `set_thread_pinned`, and `handoff_thread` are intentionally not exposed until a future Native Codex protocol supplies real primitives and regression coverage exists. The MCP endpoint is `/codex-x-app/mcp`; the existing Codex X Mode endpoint remains `/mcp`. Both surfaces reuse the same resident bridge and bearer-key boundary, so adding Codex X App does not require another browser, connector, or resident model runtime.
+
+Starting with v0.2.21, `skills/codex-x-app-tool/agents/openai.yaml` explicitly declares a `dependencies.tools` MCP dependency with `value: codex-x-app` for both CHAT and CODEX products. This is package metadata only: the dependency resolves to the MCP server bundled by this plugin and MUST NOT be interpreted as permission to load `codex-app-tools@openai-bundled` or any other external runtime dependency. A conversation that loaded an older plugin release may retain a cached tool schema; fresh host/session discovery is required before claiming the newly bound MCP namespace is visible through `api_tool`.
 
 ## Web and Mobile contract
 
