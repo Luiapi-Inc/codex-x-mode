@@ -26,20 +26,15 @@ Resources: `codex-x://status`, `codex-x://projects`. Prompts: `codex-x-backend`,
 
 ## Dispatch model selection boundary
 
-`codex_x_list_models` uses Codex app-server's `model/list` on local stdio.
-HTTP MCP and `GET /models` use the signed-in account's OAuth token to read
-`https://api.openai.com/v1/models`, preserving listed-model ordering.
-The catalog does not establish account entitlement and
-does not control the model of the ChatGPT Web conversation invoking the bridge.
-`model_version`, when supplied, is an exact ID for Codex dispatch. Unsupported
-IDs and an ambiguous default fail before thread/turn start. The bridge records
-the requested model and accepts a completed model identity only when the
-terminal event reports that exact model without reroute. An absent/mismatched
-identity leaves the execution `unknown`; it is not retried automatically.
+Local stdio `codex_x_list_models` uses Native Codex app-server `model/list`. Web-origin MCP and `GET /models` expose only the intersection of the packaged registry in `server/bridge/web_models.json` and the authorized ChatGPT account catalog from `https://api.openai.com/v1/models`. Treat account-catalog visibility as dispatch availability; do not infer a plan name or broader entitlement from it.
 
-HTTP-origin tasks require SIWC authorization and a packaged Web-model alias that is visible in the authorized account catalog before queue acceptance. The server routes new Web tasks to `chatgpt_web_headless`; local stdio routes to `codex_app_server`. Generic `chatgpt-web` uses an entitled configured default when available, otherwise the highest-priority packaged+entitled alias. Clients cannot choose the backend. Retries verify original input and recover the existing task before reading credentials or a changed catalog. Follow-ups retain the backend, registration and selected model. Workers revalidate account/catalog before child launch; legacy HTTP tasks with unknown origin are not executed.
-Status reports `readiness.web_executor = "implemented_unverified"` and keeps
-live model/end-to-end verification unverified. Source tests use named fixtures.
+For Web-origin dispatch, `model_version` is either the `chatgpt-web` family alias or an exact packaged `chatgpt-web/<version>` alias. Generic `chatgpt-web` resolves to the configured default when it is packaged and visible, otherwise to the highest-priority packaged+visible alias. Explicit aliases outside the package registry or absent from the authorized catalog fail before queue acceptance. The bridge pins the corresponding underlying model slug.
+
+New Web tasks run on `chatgpt_web_headless`; local stdio tasks run on `codex_app_server`. Clients cannot choose the execution backend. Immediately before `thread/start`, the worker uses Native Codex `model/list` to validate the exact underlying slug and supported reasoning effort. Completion counts as exact-model evidence only when the terminal event reports the same model without reroute; absent or mismatched identity remains fail-closed/`unknown` and is never retried automatically.
+
+Retries recover the original accepted task before credential or catalog refresh. Follow-ups retain the original backend, account registration, and selected model. Before child launch, the worker revalidates the authorized account registration and model-catalog visibility. Legacy `chatgpt_plan` is reconciliation-only for persisted pre-v0.2.12 work and is never selected for new Web tasks.
+
+Status keeps `readiness.web_executor = "implemented_unverified"` and `live_codex_verified=false` until a real deployed terminal task succeeds with exact model identity and no reroute.
 
 HTTP uses MCP `2026-07-28`; stdio supports modern plus legacy handshake revisions. Modern HTTP validates protocol/method/name headers and uses a distinct Bearer `mcp_key`.
 

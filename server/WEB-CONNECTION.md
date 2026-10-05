@@ -49,14 +49,21 @@ add a wildcard. Configure only a host's observed required origins.
 
 ## ChatGPT web
 
-Inspect the actual account's custom-app availability and authentication choices.
-In its supported developer/app configuration, enter the real HTTPS /mcp URL,
-configure authenticated access using a mechanism the host actually supports,
-and scan tools. The bridge implements distinct static Bearer keys; it does not
-implement an OAuth authorization server. If the host requires OAuth, a compatible
-authenticated gateway is required; do not select no-auth on this private server.
-Preserve the existing connector/plugin identity. Do not replace .app.json with a
-new connector ID or invent an endpoint.
+For Secure MCP Tunnel, create or select the ChatGPT developer-mode MCP app
+against the existing tunnel ID; do not use the OpenAI control-plane tunnel URL
+as an MCP server URL. The tunnel must already be associated with the intended
+OpenAI organization and ChatGPT workspace.
+
+The bridge keeps its static Bearer authentication on the loopback HTTP target.
+ChatGPT-side `No Authentication` is acceptable only for Secure MCP Tunnel when
+the tunnel-client profile injects the bridge Bearer value through both MCP
+`extra_headers.Authorization` and `discovery_extra_headers.Authorization`.
+Do not remove bridge authentication or expose the loopback target publicly.
+
+The package's `.app.json` must map to the registered ChatGPT developer-mode app
+returned by the binding flow. Updating that registered app mapping is an explicit
+binding migration; preserve the outer Codex X Mode plugin identity and the
+existing tunnel identity. Never invent either identifier.
 
 Verify all 13 tools are discovered. Call codex_x_status and
 codex_x_list_projects first. Then test one explicitly authorized read-only
