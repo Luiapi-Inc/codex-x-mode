@@ -59,7 +59,7 @@ def schema(base_url):
                                                    "model_version": {"type": "string", "description": "Optional exact packaged chatgpt-web alias returned by GET /models; omission retains the parent's selected model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."}}), [job_param], True, success=202)
     add("/tasks/{id}/cancel", "post", "cancelCodexTask", "Cancel a queued task or request cancellation of a running task. Unknown execution remains fail-closed.",
         body_schema(["request_key"], {"request_key": string}), [job_param], True)
-    return {"openapi": "3.1.0", "info": {"title": "Codex X Mode Bridge", "version": "0.2.13"},
+    return {"openapi": "3.1.0", "info": {"title": "Codex X Mode Bridge", "version": "0.2.14"},
             "servers": [{"url": base_url.rstrip("/")}], "paths": paths,
             "security": [{"bearerAuth": []}],
             "components": {"securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}}}

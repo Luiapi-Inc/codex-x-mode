@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
 Date: 2026-10-05
-Status: Authoritative architecture checkpoint for v0.2.13
+Status: Authoritative architecture checkpoint for v0.2.14
 
 ## Required execution path
 
@@ -84,13 +84,16 @@ Mobile must not be marked verified until an actual ChatGPT Mobile smoke test com
 - The same live probe resolved generic `chatgpt-web` to `chatgpt-web/5.6-sol` on the current entitled account, mapping to `gpt-5.6-sol` with `browser_required=false`.
 - Regression coverage proves Free-like catalog fallback to Luna, paid/default behavior for Sol, future package registry extension for Pro without routing-core changes, exact alias rejection, dedup/retry invariants, and fail-closed terminal identity.
 - v0.2.13 package/full test suite: 94/94 PASS after deterministic runtime bundle rebuild.
-- Current runtime bundle SHA-256: `a66f774ae888de457b211045dc0c04ecc48f02f174071d7262a0f2c91a823246`.
+- The deployed v0.2.13 headless acceptance attempt reached `thread/start` and `turn/start` with `chatgpt-web/5.6-sol` -> `gpt-5.6-sol`, but the provider returned a terminal failure because the ChatGPT user had reached the Subscription Sharing usage limit. No inference replay was performed.
+- v0.2.14 adds sanitized `terminal_error` persistence for failed turns while preserving fail-closed model verification when terminal model identity is unavailable.
+- v0.2.14 focused Web dispatch tests: 13/13 PASS; full package/runtime suite: 95/95 PASS.
+- v0.2.14 deterministic runtime bundle SHA-256: `eac45d7368483bef2a17d4d4b86d2722dd47c805e054a734e0c28700784a4933`.
 
-These prove package logic and the account-catalog leg. They do not yet prove a full deployed Web or Mobile terminal task.
+These prove package logic, the account-catalog leg, and that the headless route reaches the provider. They do not yet prove a successful full deployed Web or Mobile terminal task.
 
 ## Current state
 
-v0.2.13 source is implemented on branch `feat/headless-web-route` and remains `live_codex_verified=false` until real deployed E2E evidence exists.
+v0.2.14 source is implemented on branch `feat/headless-web-route` and remains `live_codex_verified=false` until a real deployed terminal task succeeds with exact model identity and no reroute. The currently deployed runtime/plugin remain v0.2.13 until this v0.2.14 checkpoint is committed, pushed, deployed, and published.
 
 The previous v0.2.12 Native-Codex-only catalog assumption is superseded by the v0.2.13 package-registry + account-catalog design because raw Native Codex did not expose `chatgpt-web/*` aliases when the external route/browser helper was absent.
 

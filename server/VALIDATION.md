@@ -294,3 +294,26 @@ Source: current account release pluginrel_6ac1eb5140e481919a61778795235240 (0.2.
   Mobile app smoke has **NOT YET BEEN RUN** and must not be reported as verified.
 - Full deployed Web terminal-task acceptance is also still **NOT PROVEN**; keep
   `live_codex_verified=false` until exact terminal-model evidence exists.
+
+## v0.2.14 terminal-failure diagnostics (2026-10-05)
+
+- The deployed v0.2.13 headless acceptance attempt reached `thread/start` and
+  `turn/start` with `chatgpt-web/5.6-sol` -> `gpt-5.6-sol`, no browser runtime,
+  and no observed reroute, but the provider returned an explicit terminal
+  `failed` event before terminal model identity was available.
+- Focused direct app-server probes at both `effort=low` and `effort=high` returned
+  the same external account blocker: the ChatGPT user had reached the
+  Subscription Sharing usage limit. Further inference probes were stopped.
+- v0.2.14 preserves the fail-closed `unknown` task state when terminal model
+  identity is absent, but now includes the terminal provider `error` payload as
+  `terminal_error` after credential-token redaction. This improves diagnostics
+  without converting an unverified inference into acceptance evidence.
+- Regression coverage asserts provider error code/message preservation and token
+  redaction. Focused Web dispatch suite: **13/13 PASS**.
+- First full package/runtime suite after the v0.2.14 change: **95/95 PASS**;
+  compile and version-consistency gates also passed.
+- Final deterministic runtime bundle hash is recorded outside the bundle in the
+  v0.2.14 release evidence so this file does not create a self-referential hash.
+- Web terminal acceptance and ChatGPT Mobile smoke remain **NOT VERIFIED** until
+  the external account usage limit resets and a new exact-model terminal success
+  is observed without reroute.

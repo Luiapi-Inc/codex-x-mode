@@ -272,6 +272,58 @@ class WebDispatchTests(unittest.TestCase):
         self.assertEqual(self.store.get(job["id"])["state"], "unknown")
         self.assertEqual(create_task(self.config, self.store, self.body(scope="workspace-write"))["id"], job["id"])
 
+    def test_failed_terminal_preserves_redacted_provider_error(self):
+        job = create_task(self.config, self.store, self.body(request_key="failed-terminal"))
+        secret = self.credentials["access_token"]
+
+        class FailedTerminal:
+            def __init__(self, *_args, **_kwargs):
+                self.notifications = []
+
+            def call(self, method, params):
+                if method == "initialize":
+                    return {}
+                if method == "model/list":
+                    return {"data": [{
+                        "id": "gpt-5.6-sol",
+                        "model": "gpt-5.6-sol",
+                        "isDefault": False,
+                        "defaultReasoningEffort": "high",
+                        "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                    }], "nextCursor": None}
+                if method == "thread/start":
+                    return {"thread": {"id": "fixture-thread"}}
+                if method == "turn/start":
+                    return {"turn": {"id": "fixture-turn"}}
+                raise AssertionError(method)
+
+            def send(self, _message):
+                pass
+
+            def close(self):
+                pass
+
+            def receive(self):
+                return {"method": "turn/completed", "params": {
+                    "threadId": "fixture-thread",
+                    "turn": {
+                        "id": "fixture-turn",
+                        "status": "failed",
+                        "error": {"message": "usage limit " + secret, "code": "usage_limit"},
+                    },
+                }}
+
+        with patch.object(codex, "AppServer", FailedTerminal):
+            codex.run_task(self.config, self.store, self.store.claim("task"))
+        result = self.store.get(job["id"])
+        self.assertEqual(result["state"], "unknown")
+        self.assertEqual(result["result"]["codex_status"], "failed")
+        terminal_error = result["result"]["terminal_error"]
+        self.assertEqual(terminal_error["code"], "usage_limit")
+        self.assertNotIn(secret, terminal_error["message"])
+        self.assertIn("[REDACTED]", terminal_error["message"])
+        self.assertFalse(result["result"]["model_selection"]["inference_verified"])
+
     def test_request_cannot_choose_execution_backend(self):
         with self.assertRaises(Fault) as caught:
             create_task(self.config, self.store, self.body(execution_backend="chatgpt_plan"))
