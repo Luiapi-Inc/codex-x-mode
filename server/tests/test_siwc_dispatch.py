@@ -235,6 +235,7 @@ class WebDispatchTests(unittest.TestCase):
         class MissingIdentity:
             def __init__(self, *_args, **_kwargs):
                 self.notifications = []
+                self._cleanup = _kwargs.get("cleanup")
 
             def call(self, method, params):
                 if method == "initialize":
@@ -259,7 +260,9 @@ class WebDispatchTests(unittest.TestCase):
                 pass
 
             def close(self):
-                pass
+                if self._cleanup is not None:
+                    self._cleanup()
+                    self._cleanup = None
 
             def receive(self):
                 return {"method": "turn/completed", "params": {
@@ -279,6 +282,7 @@ class WebDispatchTests(unittest.TestCase):
         class FailedTerminal:
             def __init__(self, *_args, **_kwargs):
                 self.notifications = []
+                self._cleanup = _kwargs.get("cleanup")
 
             def call(self, method, params):
                 if method == "initialize":
@@ -301,7 +305,9 @@ class WebDispatchTests(unittest.TestCase):
                 pass
 
             def close(self):
-                pass
+                if self._cleanup is not None:
+                    self._cleanup()
+                    self._cleanup = None
 
             def receive(self):
                 return {"method": "turn/completed", "params": {
@@ -323,6 +329,36 @@ class WebDispatchTests(unittest.TestCase):
         self.assertNotIn(secret, terminal_error["message"])
         self.assertIn("[REDACTED]", terminal_error["message"])
         self.assertFalse(result["result"]["model_selection"]["inference_verified"])
+
+    def test_web_app_server_isolates_user_codex_home_and_cleans_it(self):
+        captured = {}
+
+        class CapturingAppServer:
+            def __init__(self, command, timeout, stop, cancel, *, env=None, cleanup=None):
+                captured["command"] = command
+                captured["env"] = dict(env or {})
+                captured["cleanup"] = cleanup
+
+            def close(self):
+                if captured.get("cleanup") is not None:
+                    captured["cleanup"]()
+                    captured["cleanup"] = None
+
+        with patch.object(codex, "AppServer", CapturingAppServer):
+            app = codex._app_server(
+                self.config,
+                backend="chatgpt_web_headless",
+                credentials=self.credentials,
+            )
+
+        isolated_home = Path(captured["env"]["CODEX_HOME"])
+        self.assertTrue(isolated_home.is_dir())
+        self.assertNotEqual(isolated_home, Path.home())
+        self.assertEqual(captured["env"]["ACCESS_TOKEN"], self.credentials["access_token"])
+        self.assertNotIn("OPENAI_API_KEY", captured["env"])
+        self.assertNotIn("OPENAI_BASE_URL", captured["env"])
+        app.close()
+        self.assertFalse(isolated_home.exists())
 
     def test_request_cannot_choose_execution_backend(self):
         with self.assertRaises(Fault) as caught:

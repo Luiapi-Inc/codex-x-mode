@@ -2,6 +2,7 @@ import json
 import os
 import queue
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -19,9 +20,16 @@ class ModelSelectionError(RuntimeError):
 
 class AppServer:
     """One owned stdio app-server process per dispatched turn."""
-    def __init__(self, command, timeout=600, stop=None, cancel=None, *, env=None):
-        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
+    def __init__(self, command, timeout=600, stop=None, cancel=None, *, env=None, cleanup=None):
+        self.cleanup = cleanup
+        try:
+            self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                            stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
+        except Exception:
+            if self.cleanup is not None:
+                self.cleanup()
+                self.cleanup = None
+            raise
         self.messages = queue.Queue(maxsize=1024)
         self.notifications = []
         self.sequence = 0
@@ -93,18 +101,22 @@ class AppServer:
                 self.notifications.append(message)
 
     def close(self):
-        import os
         import signal
-        if self.process.poll() is None:
-            os.killpg(self.process.pid, signal.SIGTERM)
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.process.pid, signal.SIGKILL)
-                self.process.wait(timeout=5)
-        for handle in (self.process.stdin, self.process.stdout):
-            handle.close()
-        self.reader.join(timeout=2)
+        try:
+            if self.process.poll() is None:
+                os.killpg(self.process.pid, signal.SIGTERM)
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                    self.process.wait(timeout=5)
+            for handle in (self.process.stdin, self.process.stdout):
+                handle.close()
+            self.reader.join(timeout=2)
+        finally:
+            if self.cleanup is not None:
+                self.cleanup()
+                self.cleanup = None
 
 
 def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_app_server", credentials=None):
@@ -115,6 +127,12 @@ def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_a
         for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN"):
             env.pop(key, None)
         env["ACCESS_TOKEN"] = credentials["access_token"]
+        # Keep Web dispatch isolated from user-level Codex picker/provider config.
+        # In particular, v0.2.18 installs model_catalog_json for the Desktop picker;
+        # inheriting that catalog here would replace native gpt-* IDs with public
+        # chatgpt-web/* aliases and make exact underlying-model validation fail.
+        codex_home = tempfile.TemporaryDirectory(prefix="codex-x-web-app-server-")
+        env["CODEX_HOME"] = codex_home.name
         command = config["codex_command"] + ["app-server", "--listen", "stdio://"]
         # This is the official headless ChatGPT-plan Responses provider contract.
         # `chatgpt_web_headless` is the Codex X Mode route name; no browser runtime
@@ -133,7 +151,11 @@ def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_a
         }
         for key, value in settings.items():
             command.extend(["-c", key + "=" + value])
-        return AppServer(command, timeout, stop, cancel, env=env)
+        try:
+            return AppServer(command, timeout, stop, cancel, env=env, cleanup=codex_home.cleanup)
+        except Exception:
+            codex_home.cleanup()
+            raise
     if backend != "codex_app_server":
         raise ModelSelectionError("Task execution backend is invalid")
     command = config["codex_command"] + ["-c", 'model_provider="openai"', "app-server"]
@@ -218,7 +240,7 @@ def list_models(config, required_prefix=None):
     app = None
     try:
         app = _app_server(config, timeout=config.get("model_list_timeout_seconds", 60))
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.18"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.19"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
@@ -318,7 +340,7 @@ def run_task(config, store, job, stop=None):
                if backend in ("chatgpt_web_headless", "chatgpt_plan")
                else _app_server(*launch_args, backend=backend))
         phase = "initialize"
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.18"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.19"}})
         app.send({"method": "initialized", "params": {}})
 
         if backend == "chatgpt_web_headless":

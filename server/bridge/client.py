@@ -126,7 +126,7 @@ class MCPClient:
         if self.version == MODERN_VERSION:
             params["_meta"] = {"io.modelcontextprotocol/protocolVersion": self.version,
                                "io.modelcontextprotocol/clientCapabilities": {},
-                               "io.modelcontextprotocol/clientInfo": {"name": "codex-x-client", "version": "0.2.18"}}
+                               "io.modelcontextprotocol/clientInfo": {"name": "codex-x-client", "version": "0.2.19"}}
         self.counter += 1
         request = {"jsonrpc": "2.0", "method": method, "params": params}
         if not notification:
@@ -143,7 +143,7 @@ class MCPClient:
                     raise ClientError("Server does not support selected protocol")
             else:
                 result = self._request("initialize", {"protocolVersion": self.version,
-                    "capabilities": {}, "clientInfo": {"name": "codex-x-client", "version": "0.2.18"}})
+                    "capabilities": {}, "clientInfo": {"name": "codex-x-client", "version": "0.2.19"}})
                 negotiated = result.get("protocolVersion")
                 if negotiated not in LEGACY_VERSIONS:
                     raise ClientError("Unsupported negotiated protocol")

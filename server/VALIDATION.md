@@ -317,3 +317,23 @@ Source: current account release pluginrel_6ac1eb5140e481919a61778795235240 (0.2.
 - Web terminal acceptance and ChatGPT Mobile smoke remain **NOT VERIFIED** until
   the external account usage limit resets and a new exact-model terminal success
   is observed without reroute.
+
+## v0.2.19 Web app-server config isolation (2026-10-06)
+
+- A new harmless v0.2.18 Web-origin acceptance task failed before execution at
+  `native_model_catalog` with `execution_may_have_started=false` and no thread/turn IDs.
+- Read-only diagnostics proved the account itself was not missing the model: `codex debug models`
+  exposed all three packaged `chatgpt-web/*` aliases. The failure was caused by v0.2.18's
+  user-level `model_catalog_json` for the Codex Desktop picker leaking into the headless Web
+  app-server, while dispatch validation correctly requested the exact underlying `gpt-*` slug.
+- v0.2.19 gives each headless Web app-server an ephemeral `CODEX_HOME`, preserving the strict
+  underlying-model validator while isolating execution from user-level picker/provider config.
+  The directory is removed when the owned app-server closes and also on launch failure.
+- A no-inference live diagnostic against the patched source returned native underlying
+  `gpt-5.6-sol`, did not expose `chatgpt-web/5.6-sol`, selected the exact underlying model,
+  and reported the Native Codex reasoning effort without starting a thread or turn.
+- Regression coverage asserts CODEX_HOME isolation and deterministic cleanup; focused Web suite
+  passes **14/14** with `ResourceWarning` promoted to an error.
+- First full v0.2.19 package/runtime suite: **100/100 PASS**; compile, version consistency and
+  `git diff --check` also pass. Final deterministic runtime bundle hash is recorded in the
+  external v0.2.19 evidence file after the validation text is bundled.

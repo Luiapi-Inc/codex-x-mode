@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
 Date: 2026-10-05
-Status: Authoritative architecture checkpoint for v0.2.18
+Status: Authoritative architecture checkpoint for v0.2.19
 
 ## Required execution path
 
@@ -98,6 +98,7 @@ Mobile must not be marked verified until an actual ChatGPT Mobile smoke test com
 - v0.2.18 adds a Codex-native `model_catalog_json` generator that clones installed Codex 0.156.1 bundled metadata for the packaged `chatgpt-web/*` aliases and wires the existing private Responses provider as `Codex X Mode`; full suite: 99/99 PASS; deterministic runtime bundle SHA-256: `047b4d5cb14d332cf791d1a975d587fb68df543c18df4d0d38de1f2709d36e51`.
 - v0.2.18 local Codex smoke selected `chatgpt-web/5.6-luna` with provider `custom_gpt_bridge`, produced a Codex X Mode backend turn whose turn metadata named the same alias, and returned the exact completed text to `codex exec`. Account release `pluginrel_6ac3d8b35f048191909dc62096a9048c` preserves outer plugin identity and USER/PRIVATE audience; deployed runtime reports v0.2.18 and all 13 MCP tools.
 - v0.2.18 clean-install/self-contained verification against exact commit `a1aba16409bd3784a2c3be4671817bdd962d5a17` passed from `git archive HEAD` in a fresh HOME with Python site packages disabled: full suite **99/99 PASS**, bundled MCP stdio exposed **13 tools / 2 resources / 2 prompts**, fresh SIWC failed closed as `authorization_required`, and the package generated exactly the three `chatgpt-web/*` Codex picker aliases without another Plugin/Skill/MCP package or browser automation runtime. Evidence: `docs/evidence/2026-10-06-v0.2.18-clean-install.md`.
+- v0.2.19 fixes a Web-execution/desktop-picker configuration collision exposed by task `task_7096b4c71b0a4510a8f574f4bea760b2`: the v0.2.18 task failed before execution at `native_model_catalog` because the headless app-server inherited user-level `model_catalog_json` aliases while strict execution validation requested underlying `gpt-*` IDs. v0.2.19 gives each Web app-server an ephemeral isolated `CODEX_HOME`; a no-inference live diagnostic then exposed `gpt-5.6-sol`, excluded `chatgpt-web/5.6-sol`, and selected the exact underlying model. Focused Web suite **14/14 PASS**; first full suite **100/100 PASS**. Evidence: `docs/evidence/2026-10-06-v0.2.19-web-app-server-isolation.md`.
 
 These prove package logic, the account-catalog leg, and that the headless route reaches the provider. They do not yet prove a successful full deployed Web or Mobile terminal task.
 
