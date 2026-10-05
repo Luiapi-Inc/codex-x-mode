@@ -12,6 +12,7 @@ from .core import Store
 from .http import Server
 from .mcp import serve_stdio
 from .codex import worker
+from .codex_catalog import CodexCatalogError, default_catalog_path, write_codex_catalog
 from .schema import dump
 from . import siwc
 
@@ -46,6 +47,8 @@ def main():
     codex = commands.add_parser("codex")
     codex.add_argument("--port", type=int, default=8240)
     codex.add_argument("args", nargs=argparse.REMAINDER)
+    codex_catalog = commands.add_parser("codex-catalog")
+    codex_catalog.add_argument("--output", default=str(default_catalog_path()))
     commands.add_parser("siwc-login")
     commands.add_parser("siwc-status")
     commands.add_parser("siwc-host-id")
@@ -107,12 +110,24 @@ def main():
             parser.error(f"{args.role} key is not configured")
         print(value)
         return
+    if args.command == "codex-catalog":
+        try:
+            path = write_codex_catalog(config, args.output)
+        except (CodexCatalogError, OSError) as exc:
+            parser.error(str(exc))
+        print(path)
+        return
     if args.command == "codex":
         env = dict(os.environ, CODEX_BRIDGE_PROVIDER_KEY=config["provider_key"])
         extra = args.args[1:] if args.args[:1] == ["--"] else args.args
+        try:
+            catalog_path = write_codex_catalog(config)
+        except (CodexCatalogError, OSError) as exc:
+            parser.error(str(exc))
         command = config["codex_command"] + [
             "-c", 'model_provider="custom_gpt_bridge"',
-            "-c", 'model_providers.custom_gpt_bridge.name="Custom GPT Bridge"',
+            "-c", "model_catalog_json=" + json.dumps(str(catalog_path)),
+            "-c", 'model_providers.custom_gpt_bridge.name="Codex X Mode"',
             "-c", 'model_providers.custom_gpt_bridge.wire_api="responses"',
             "-c", f'model_providers.custom_gpt_bridge.base_url="http://127.0.0.1:{args.port}/v1"',
             "-c", 'model_providers.custom_gpt_bridge.env_key="CODEX_BRIDGE_PROVIDER_KEY"',

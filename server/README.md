@@ -75,11 +75,14 @@ For web/mobile, reverse-proxy only intended MCP/Actions routes over HTTPS. Keep 
 
 ## Backend flow
 
-Run a Codex process through the local provider wrapper while the bridge is active:
+Run a Codex process through the local provider wrapper while the bridge is active. The wrapper regenerates a Codex-native model catalog from the installed Codex bundled metadata, rewrites only the packaged aliases, and points the process at the existing private Responses provider:
 
 ```bash
+python3 -m bridge codex-catalog
 python3 -m bridge codex -- --sandbox read-only
 ```
+
+The default generated catalog is `~/.local/share/codex-x-mode/codex-models.json` with mode 600. For Codex Desktop, user-level `config.toml` must select `custom_gpt_bridge` and this catalog at startup; the provider secret stays in `CODEX_BRIDGE_PROVIDER_KEY` and is never written into the catalog or repository. A full Desktop restart is required after changing startup catalog/provider configuration.
 
 Backend handling:
 

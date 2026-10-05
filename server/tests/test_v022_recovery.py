@@ -112,7 +112,7 @@ class RecoveryHardeningTests(unittest.TestCase):
         self.assertEqual(via_mcp["id"], turn["id"])
 
         spec = schema("https://bridge.example.invalid")
-        self.assertEqual(spec["info"]["version"], "0.2.17")
+        self.assertEqual(spec["info"]["version"], "0.2.18")
         params = spec["paths"]["/backend/{id}/context"]["get"]["parameters"]
         lease = next(p for p in params if p["name"] == "lease")
         self.assertTrue(lease["required"])

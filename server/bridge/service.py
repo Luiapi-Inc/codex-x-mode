@@ -53,7 +53,7 @@ def status(config, store):
         authorization = {"state": "authorization_required"}
     return {
         "status": "up",
-        "version": "0.2.17",
+        "version": "0.2.18",
         "live_codex_verified": False,
         "projects": len(config.get("projects", {})),
         "unknown_projects": unknown,
