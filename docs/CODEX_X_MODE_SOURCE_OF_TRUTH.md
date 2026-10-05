@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
 Date: 2026-10-05
-Status: Authoritative architecture checkpoint for v0.2.17
+Status: Authoritative architecture checkpoint for v0.2.18
 
 ## Required execution path
 
@@ -95,12 +95,14 @@ Mobile must not be marked verified until an actual ChatGPT Mobile smoke test com
 - v0.2.16 full suite: 96/96 PASS; deterministic runtime bundle SHA-256: `d6a77deaaf51f6d68503e94e204cd0e65c9ab0fa3f7f829104b1405f7d1c6a06`. Account release read-back showed the compatibility `.mcp.json` was still derived from the authoritative root stdio `mcp.json`, so the Codex HTTP MCP change was not effective in that release.
 - v0.2.17 moves the effective plugin MCP identity to authoritative root `mcp.json` as credential-free loopback Streamable HTTP and keeps bearer-token handling client-side; full suite: 96/96 PASS; deterministic bundle SHA-256: `b365efdaa74cd3e3d9924e7319b8d5e0562adf151c5c460d93ff57476dc3bc83`.
 - v0.2.17 account release `pluginrel_6ac3cb1642788191bb13a918a0a10cee` preserves outer plugin `plugins_6ac10a6f500881918a222dd8b7693752` as USER/PRIVATE. Read-back confirms root `mcp.json` is Streamable HTTP at `http://127.0.0.1:8240/mcp`; the Mac LaunchAgent and authenticated MCP client report runtime v0.2.17, 13 tools, and transport available.
+- v0.2.18 adds a Codex-native `model_catalog_json` generator that clones installed Codex 0.156.1 bundled metadata for the packaged `chatgpt-web/*` aliases and wires the existing private Responses provider as `Codex X Mode`; full suite: 99/99 PASS; deterministic runtime bundle SHA-256: `047b4d5cb14d332cf791d1a975d587fb68df543c18df4d0d38de1f2709d36e51`.
+- v0.2.18 local Codex smoke selected `chatgpt-web/5.6-luna` with provider `custom_gpt_bridge`, produced a Codex X Mode backend turn whose turn metadata named the same alias, and returned the exact completed text to `codex exec`. Account release `pluginrel_6ac3d8b35f048191909dc62096a9048c` preserves outer plugin identity and USER/PRIVATE audience; deployed runtime reports v0.2.18 and all 13 MCP tools.
 
 These prove package logic, the account-catalog leg, and that the headless route reaches the provider. They do not yet prove a successful full deployed Web or Mobile terminal task.
 
 ## Current state
 
-v0.2.17 is published and deployed from branch `feat/headless-web-route`. The v0.2.16 account release exposed a packaging rule: portable `mcp.json` is authoritative and the account backend regenerated the Codex compatibility MCP entry from it, so changing only `.mcp.json` did not make the published MCP connection effective. v0.2.17 moves the effective plugin connection to root `mcp.json` as a credential-free loopback Streamable HTTP declaration. Account read-back confirms that effective MCP configuration; user-level Codex config supplies `bearer_token_env_var=CODEX_X_MCP_TOKEN` for the same endpoint. The Mac LaunchAgent now runs the v0.2.17 bridge and authenticated MCP transport reports all 13 tools with status `up`. `live_codex_verified` remains false until a real deployed terminal task succeeds with exact model identity and no reroute.
+v0.2.18 is published and deployed from branch `feat/headless-web-route`. It keeps the v0.2.17 authoritative loopback Streamable HTTP MCP connection and adds Codex-native host model selection through a generated `model_catalog_json` plus the existing private Responses provider. User-level Codex config now selects `custom_gpt_bridge`, points at the generated catalog, and keeps the provider credential outside the config through `CODEX_BRIDGE_PROVIDER_KEY`. Global Codex catalog read-back exposes exactly the three packaged aliases, and a local read-only Codex smoke completed through the provider/backend-turn path with `chatgpt-web/5.6-luna`. Account read-back confirms plugin v0.2.18 release `pluginrel_6ac3d8b35f048191909dc62096a9048c`, USER/PRIVATE audience, the new catalog source, and the 77,797-byte runtime bundle. The Mac LaunchAgent runs the v0.2.18 runtime and authenticated MCP transport reports all 13 tools with status `up`. Codex Desktop must be fully restarted to reload startup provider/catalog configuration. `live_codex_verified` remains false because the local provider smoke is not the stricter real Web-originated terminal task with exact underlying terminal model identity and no reroute.
 
 The previous v0.2.12 Native-Codex-only catalog assumption is superseded by the v0.2.13 package-registry + account-catalog design because raw Native Codex did not expose `chatgpt-web/*` aliases when the external route/browser helper was absent.
 
