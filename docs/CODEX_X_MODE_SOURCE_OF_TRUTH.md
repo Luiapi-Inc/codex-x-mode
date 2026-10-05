@@ -138,33 +138,38 @@ Mobile must not be marked verified until an actual ChatGPT Mobile smoke test com
 - v0.2.19 fixes a Web-execution/desktop-picker configuration collision exposed by task `task_7096b4c71b0a4510a8f574f4bea760b2`: the v0.2.18 task failed before execution at `native_model_catalog` because the headless app-server inherited user-level `model_catalog_json` aliases while strict execution validation requested underlying `gpt-*` IDs. v0.2.19 gives each Web app-server an ephemeral isolated `CODEX_HOME`; a no-inference live diagnostic then exposed `gpt-5.6-sol`, excluded `chatgpt-web/5.6-sol`, and selected the exact underlying model. Focused Web suite **14/14 PASS**; first full suite **100/100 PASS**. Evidence: `docs/evidence/2026-10-06-v0.2.19-web-app-server-isolation.md`.
 - v0.2.19 clean-install/self-contained verification against exact commit `dbbd0087f3074996ab90adb1f5d42d21dd5ff8b9` passed from `git archive HEAD` in a fresh HOME with Python site packages disabled: full suite **100/100 PASS**, bundled MCP stdio exposed **13 tools / 2 resources / 2 prompts**, fresh SIWC failed closed as `authorization_required`, and the package generated exactly `chatgpt-web/5.6-sol`, `chatgpt-web/5.6-luna`, and `chatgpt-web/5.5` without another Plugin/Skill/MCP package or browser automation runtime. Private plugin surface was aligned to v0.2.19 before one new live Web task. That task (`task_6edcc287478246a9acc2a5df25662213`) selected `chatgpt-web/5.6-sol` -> `gpt-5.6-sol` with no reroute but ended fail-closed as `unknown` because the provider returned the Subscription Sharing usage-limit error before terminal model identity was available. No retry was performed. Evidence: `docs/evidence/2026-10-06-v0.2.19-clean-install-live-e2e.md`.
 
-These prove package logic, the account-catalog leg, and that the headless route reaches the provider. They do not yet prove a successful full deployed Web or Mobile terminal task.
+These historical checkpoints document how the architecture evolved. For all new work, the v0.2.20+ Native-Codex-owned contract supersedes the earlier SIWC/account-catalog and custom-provider execution designs.
 
 ## Current state
 
-v0.2.19 source is committed on branch `feat/headless-web-route` at `dbbd0087f3074996ab90adb1f5d42d21dd5ff8b9`; the Mac LaunchAgent runs `~/.local/share/codex-x-mode/releases/0.2.19/server`, health is `up`, authenticated MCP initialize reports server version `0.2.19`, and Secure Tunnel doctor reports `RESULT ok`. The final deterministic runtime bundle SHA-256 is `894505f19f50d7cb9993db9034134f3ae8831b27d603625eba7def04f9c4c582` and the final/full plus clean-isolated suites are **100/100 PASS**.
+v0.2.21 source is committed on branch `feat/headless-web-route` at `97bc16fc8f36aa61969ad0cafee468c3a3fd6bbb`. The final deterministic runtime bundle SHA-256 is `01fd01e44982d85bcf1c95794fde964094e5624ef85ffebbeaa00d594a24ba03`; the full runtime/package suite is **110/110 PASS**, the focused Skill/Codex X App/native-routing suite is **26/26 PASS**, compile and `git diff --check` pass, and a real no-inference `codex_x_app.list_threads(limit=1)` probe passes against `codex-cli 0.160.1`.
 
-The first deployed v0.2.19 Web-origin acceptance task (`task_0a71a17020a64416b972aaaa69e9df30`) proved the CODEX_HOME isolation fix: the bridge selected `chatgpt-web/5.6-sol` -> `gpt-5.6-sol`, created a real Native Codex thread and turn, used reasoning effort `low`, and observed no reroute. The external Responses provider then returned `Subscription Sharing usage limit`; terminal model identity was unavailable, so the task correctly remains fail-closed `unknown` and `live_codex_verified=false`. Do not replay this task or create another inference probe while the external usage limit remains active.
+The Mac LaunchAgent runs `$HOME/.local/share/codex-x-mode/releases/0.2.21/server` and health reports `up`. Authenticated live MCP discovery reports `codex-x-mode 0.2.21` with 13 tools at `/mcp` and `codex-x-app 0.2.21` with 8 tools at `/codex-x-app/mcp`. Critical deployed files match the source checkpoint.
 
-The private USER/PRIVATE ChatGPT plugin metadata surface is now aligned to v0.2.19 after a guarded manifest-only overlay update using release guard `pluginrel_6ac3d8b35f048191909dc62096a9048c`; the resulting current release is `pluginrel_6ac3ed1b790081918853cfa2d66da13c`. Source/runtime/MCP/tunnel/plugin metadata are therefore aligned to v0.2.19. After that alignment, exactly one new harmless read-only Web task (`task_6edcc287478246a9acc2a5df25662213`) was created. It again selected `chatgpt-web/5.6-sol` -> `gpt-5.6-sol` with no reroute and again failed at the same external Subscription Sharing usage limit before terminal model identity. No retry was performed; `live_codex_verified` remains false.
+The private USER/PRIVATE ChatGPT plugin is aligned to v0.2.21 at release `pluginrel_6ac4280598ac8191a6218291e7c92400`. Hosted read-back confirms both MCP server declarations, the `codex-x-app-tool` Skill, and `skills/codex-x-app-tool/agents/openai.yaml` with an explicit `dependencies.tools` entry whose MCP value is `codex-x-app` for CHAT and CODEX products. This binding points only to the MCP server bundled by this plugin; it does not authorize or require `codex-app-tools@openai-bundled` or any other external runtime plugin.
 
-The previous v0.2.12 Native-Codex-only catalog assumption is superseded by the v0.2.13 package-registry + account-catalog design because raw Native Codex did not expose `chatgpt-web/*` aliases when the external route/browser helper was absent.
+The conversation that loaded an older release still exposes a cached `Codex_X_Mode` `api_tool` schema with 13 tools and stale SIWC-era descriptions. That cache is not source/runtime evidence and MUST NOT be used to redesign the architecture. Fresh host/session discovery is required before the `api_tool` namespace-visibility gate can be marked PASS.
+
+`live_codex_verified` remains `false`. No successful terminal inference with exact observed model identity has been proven under the corrected Native-Codex-owned path yet, and Mobile E2E remains unverified.
 
 ## Acceptance gates
 
 Full architecture PASS requires evidence for all of:
 
 - package registry contains only intended public aliases;
-- visible catalog equals package policy ∩ authorized account catalog;
-- generic `chatgpt-web` resolves deterministically to an entitled packaged alias;
+- visible Web catalog equals package policy ∩ Native Codex `model/list` for the signed-in account;
+- generic `chatgpt-web` resolves deterministically to a packaged model visible to Native Codex;
 - exact underlying model slug is pinned without substitution;
-- valid reasoning effort is selected from execution-model metadata and sent to Native Codex;
+- Native Codex owns authentication, entitlement/model discovery, thread/turn execution, and inference for new work;
+- SIWC, Subscription Sharing, `chatgpt_plan`, and custom Responses-provider routing are never selected for new work;
+- valid reasoning effort is selected from Native Codex execution-model metadata;
 - no reroute;
-- real harmless read-only Web -> Bridge -> Native Codex -> ChatGPT backend terminal success;
+- real harmless read-only Web -> Bridge -> Native Codex -> ChatGPT backend terminal success with exact terminal model identity;
 - targeted + full tests green;
 - package/build validation green;
 - release/runtime hashes recorded;
-- deployed version aligned across manifest, server, runtime, MCP config;
+- deployed version aligned across manifest, server, runtime, both MCP surfaces, Skill metadata, and hosted private plugin;
+- `codex-x-app-tool` resolves to bundled MCP identifier `codex-x-app` and fresh host/session discovery exposes the intended tool surface;
 - health/status good;
 - clean-install proof that no external Plugin/Skill/MCP package is required by the runtime;
 - actual ChatGPT Mobile smoke before Mobile is marked verified.
