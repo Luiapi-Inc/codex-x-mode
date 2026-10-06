@@ -3,7 +3,7 @@ name: codex-x-app-tool
 description: Use when the user wants Codex app thread orchestration through the bundled codex-x-app MCP surface, including listing, reading, creating, forking, messaging, titling, archiving, or waiting on Native Codex threads.
 ---
 
-# Codex X App Tool
+# Codex X Mode Tool
 
 Use the bundled `codex-x-app` MCP server shipped with Codex X Mode for Native Codex thread orchestration.
 
