@@ -5,7 +5,7 @@ description: Diagnose, repair, validate, and recover the Codex X Mode Plugin/MCP
 
 # Codex X Mode Maintainer
 
-Maintain Codex X Mode from its own source of truth. Work from `/Users/luiapi/codex-x-mode` when that path is available; otherwise locate the checked-out `Luiapi-Inc/Codex-X-Mode` repository and verify its identity before any mutation.
+Maintain Codex X Mode from its own source of truth. Work from the active checked-out `Luiapi-Inc/Codex-X-Mode` repository; when a conventional local checkout exists under `$HOME/codex-x-mode`, verify its identity before any mutation.
 
 ## Establish authority first
 
