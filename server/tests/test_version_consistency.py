@@ -69,7 +69,7 @@ class VersionConsistencyTests(unittest.TestCase):
         agent = root / "skills/codex-x-app-tool/agents/openai.yaml"
         self.assertTrue(agent.is_file())
         agent_text = agent.read_text()
-        self.assertIn('display_name: "Codex X App Tool"', agent_text)
+        self.assertIn('display_name: "Codex X Mode Tool"', agent_text)
         self.assertIn("- CHAT", agent_text)
         self.assertIn("- CODEX", agent_text)
         self.assertIn("type: mcp", agent_text)
