@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from .core import Fault
 
 
-SERVER_INFO = {"name": "codex-x-app", "title": "Codex X App", "version": "0.2.21"}
+SERVER_INFO = {"name": "codex-x-app", "title": "Codex X App", "version": "0.2.22"}
 LOCAL_HOST_ID = "local"
 
 
@@ -278,7 +278,7 @@ def _managed_app(config, timeout=60):
             app = None
             try:
                 app = _ManagedNativeApp(command, env=_native_env(), timeout=timeout)
-                app.call("initialize", {"clientInfo": {"name": "codex_x_mode_codex_x_app", "title": "Codex X App", "version": "0.2.21"}}, timeout=max(10, timeout))
+                app.call("initialize", {"clientInfo": {"name": "codex_x_mode_codex_x_app", "title": "Codex X App", "version": "0.2.22"}}, timeout=max(10, timeout))
                 app.send({"method": "initialized", "params": {}})
             except Exception as exc:
                 try:

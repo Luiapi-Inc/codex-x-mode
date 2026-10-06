@@ -684,13 +684,42 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(listed["result"]["resultType"], "complete")
         self.assertEqual(listed["result"]["ttlMs"], 0)
         self.assertEqual(listed["result"]["cacheScope"], "private")
-        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.21")
+        self.assertEqual(listed["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"], "0.2.22")
 
         mismatch = dict(request)
         mismatch["id"] = 5
         self.assertEqual(self.request("POST", "/mcp", mismatch, role="mcp", extra_headers={
             "MCP-Protocol-Version": "2025-11-25", "Mcp-Method": "tools/list"
         })[0], 400)
+
+
+    def test_public_mcp_path_aliases_preserve_surface_and_auth(self):
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "alias-test", "version": "1"},
+        }
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"_meta": meta}}
+        for path, expected, excluded in (
+            ("/mode/mcp", "codex_x_create_task", "list_threads"),
+            ("/app/mcp", "list_threads", "codex_x_create_task"),
+        ):
+            self.assertEqual(
+                self.request("POST", path, request, role="gpt", extra_headers=self.mcp_headers("tools/list"))[0],
+                401,
+            )
+            status_code, listed = self.request(
+                "POST", path, request, role="mcp", extra_headers=self.mcp_headers("tools/list")
+            )
+            self.assertEqual(status_code, 200)
+            names = {tool["name"] for tool in listed["result"]["tools"]}
+            self.assertIn(expected, names)
+            self.assertNotIn(excluded, names)
+
+        for path in ("/mode/mcp", "/app/mcp"):
+            status_code, body = self.request("GET", path, role="mcp")
+            self.assertEqual(status_code, 404)
+            self.assertIn("not advertised", body["error"]["message"])
 
     def test_backend_sse_tool_loop_and_chunking(self):
         with concurrent.futures.ThreadPoolExecutor() as pool:

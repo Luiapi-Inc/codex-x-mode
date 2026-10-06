@@ -114,10 +114,10 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, {"status": "up", "live_codex_verified": False})
             return
 
-        if method == "GET" and (path in ("/mcp", "/codex-x-app/mcp") or path.startswith("/.well-known/")):
+        if method == "GET" and (path in ("/mcp", "/mode/mcp", "/codex-x-app/mcp", "/app/mcp") or path.startswith("/.well-known/")):
             raise Fault(404, "OAuth discovery metadata is not advertised")
 
-        if method == "POST" and path in ("/mcp", "/codex-x-app/mcp"):
+        if method == "POST" and path in ("/mcp", "/mode/mcp", "/codex-x-app/mcp", "/app/mcp"):
             self.auth("mcp")
             request = self.body(1024 * 1024)
             try:
@@ -138,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
                     if version not in LEGACY_VERSIONS or body_version not in (None, version):
                         raise RpcError(-32022, "Unsupported or mismatched protocol version")
                     state = {"version": version}
-                surface = "codex_x_app" if path == "/codex-x-app/mcp" else "codex_x"
+                surface = "codex_x_app" if path in ("/codex-x-app/mcp", "/app/mcp") else "codex_x"
                 response = rpc_response(request, self.server.config, store, state, surface)
             except RpcError as exc:
                 error = {"code": exc.code, "message": str(exc)}

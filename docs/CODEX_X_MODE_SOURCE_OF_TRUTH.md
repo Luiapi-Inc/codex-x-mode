@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
 Date: 2026-10-06
-Status: Authoritative architecture checkpoint for v0.2.21 candidate
+Status: Authoritative architecture checkpoint for v0.2.22 Cloudflare Named Tunnel candidate
 
 ## Required execution path
 
@@ -142,13 +142,13 @@ These historical checkpoints document how the architecture evolved. For all new 
 
 ## Current state
 
-v0.2.21 source is committed on branch `feat/headless-web-route` at `97bc16fc8f36aa61969ad0cafee468c3a3fd6bbb`. The final deterministic runtime bundle SHA-256 is `01fd01e44982d85bcf1c95794fde964094e5624ef85ffebbeaa00d594a24ba03`; the full runtime/package suite is **110/110 PASS**, the focused Skill/Codex X App/native-routing suite is **26/26 PASS**, compile and `git diff --check` pass, and a real no-inference `codex_x_app.list_threads(limit=1)` probe passes against `codex-cli 0.160.1`.
+v0.2.22 is the active working-tree candidate on branch `feat/headless-web-route`. It adds backward-compatible public MCP aliases `/mode/mcp` and `/app/mcp`, while preserving the loopback `/mcp` and `/codex-x-app/mcp` endpoints used by the Plugin-owned MCP declarations. The full runtime/package suite is **111/111 PASS**, compile and `git diff --check` pass, and the deterministic runtime bundle double-build SHA-256 is `f14b695b9773ec24fe2f3ec658da7ef9212f78784a24661b1308fcd540a4d39f`.
 
-The Mac LaunchAgent runs `$HOME/.local/share/codex-x-mode/releases/0.2.21/server` and health reports `up`. Authenticated live MCP discovery reports `codex-x-mode 0.2.21` with 13 tools at `/mcp` and `codex-x-app 0.2.21` with 8 tools at `/codex-x-app/mcp`. Critical deployed files match the source checkpoint.
+The Mac LaunchAgent runs `$HOME/.local/share/codex-x-mode/releases/0.2.22/server` and health reports `up`. A Cloudflare Named Tunnel named `codex-x-mode` routes `codex-x.lott0.online` to loopback with an ingress allowlist for only `/mode/mcp` and `/app/mcp`; public `/v1/*` and the hostname root return 404. Authenticated public MCP discovery reports `codex-x-mode 0.2.22` with 13 tools and `codex-x-app 0.2.22` with 8 tools. Unauthenticated POSTs to both MCP aliases return 401.
 
-The private USER/PRIVATE ChatGPT plugin is aligned to v0.2.21 at release `pluginrel_6ac4280598ac8191a6218291e7c92400`. Hosted read-back confirms both MCP server declarations, the `codex-x-app-tool` Skill, and `skills/codex-x-app-tool/agents/openai.yaml` with an explicit `dependencies.tools` entry whose MCP value is `codex-x-app` for CHAT and CODEX products. This binding points only to the MCP server bundled by this plugin; it does not authorize or require `codex-app-tools@openai-bundled` or any other external runtime plugin.
+The Plugin package continues to own both MCP declarations through `mcp.json` / compatibility `.mcp.json`; users must not add duplicate MCP entries to user-level Codex configuration. Remote authentication remains fail-closed and the private bridge bearer is not shipped in Plugin files.
 
-The conversation that loaded an older release still exposes a cached `Codex_X_Mode` `api_tool` schema with 13 tools and stale SIWC-era descriptions. That cache is not source/runtime evidence and MUST NOT be used to redesign the architecture. Fresh host/session discovery is required before the `api_tool` namespace-visibility gate can be marked PASS.
+The hosted private Plugin is still the previous v0.2.21 release while the v0.2.22 candidate is being completed. Its existing `.app.json` binding therefore must not be treated as evidence that ChatGPT Web is already using the new Cloudflare endpoints. A supported authenticated remote MCP binding is required before publishing/migrating the hosted connection; the bridge must not be made anonymous and the private static bearer must not be embedded in Plugin metadata.
 
 `live_codex_verified` remains `false`. No successful terminal inference with exact observed model identity has been proven under the corrected Native-Codex-owned path yet, and Mobile E2E remains unverified.
 
