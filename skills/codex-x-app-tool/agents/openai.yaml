@@ -1,5 +1,5 @@
 interface:
-  display_name: "Codex X App Tool"
+  display_name: "Codex X Mode Tool"
   short_description: "Native Codex thread tools"
   default_prompt: "Use $codex-x-app-tool to manage Native Codex threads through the bundled codex-x-app MCP tools."
 policy:
