@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex X Mode Maintainer"
+  short_description: "Diagnose and repair Codex X Mode Plugin/MCP"
+  default_prompt: "Use $codex-x-mode-maintainer to diagnose and repair Codex X Mode Plugin/MCP end-to-end."
