@@ -142,9 +142,9 @@ These historical checkpoints document how the architecture evolved. For all new 
 
 ## Current state
 
-v0.2.22 is the active working-tree candidate on branch `feat/headless-web-route`. It adds backward-compatible public MCP aliases `/mode/mcp` and `/app/mcp`, while preserving the loopback `/mcp` and `/codex-x-app/mcp` endpoints used by the Plugin-owned MCP declarations. The full runtime/package suite is **111/111 PASS**, compile and `git diff --check` pass, and the deterministic runtime bundle double-build SHA-256 is `f14b695b9773ec24fe2f3ec658da7ef9212f78784a24661b1308fcd540a4d39f`.
+v0.2.22 is the active working-tree candidate on branch `feat/headless-web-route`. It adds backward-compatible public MCP aliases `/mode/mcp` and `/app/mcp`, while preserving the loopback `/mcp` and `/codex-x-app/mcp` endpoints used by the Plugin-owned MCP declarations. The full runtime/package suite is **111/111 PASS**, compile and `git diff --check` pass, and the deterministic runtime bundle double-build SHA-256 is `db2743b9372f88bc8d8039f0a7107913055acce3260f361f2e95bcd19bbc7790`.
 
-The Mac LaunchAgent runs `$HOME/.local/share/codex-x-mode/releases/0.2.22/server` and health reports `up`. A Cloudflare Named Tunnel named `codex-x-mode` routes `codex-x.lott0.online` to loopback with an ingress allowlist for only `/mode/mcp` and `/app/mcp`; public `/v1/*` and the hostname root return 404. Authenticated public MCP discovery reports `codex-x-mode 0.2.22` with 13 tools and `codex-x-app 0.2.22` with 8 tools. Unauthenticated POSTs to both MCP aliases return 401.
+The Mac LaunchAgent runs `$HOME/.local/share/codex-x-mode/releases/0.2.22/server` and health reports `up`. A Cloudflare Named Tunnel named `codex-x-mode` routes `codex-x-mode.lott0.online` to loopback with an ingress allowlist for only `/mode/mcp` and `/app/mcp`; public `/v1/*` and the hostname root return 404. Authenticated public MCP discovery reports `codex-x-mode 0.2.22` with 13 tools and `codex-x-app 0.2.22` with 8 tools. Unauthenticated POSTs to both MCP aliases return 401.
 
 The Plugin package continues to own both MCP declarations through `mcp.json` / compatibility `.mcp.json`; users must not add duplicate MCP entries to user-level Codex configuration. Remote authentication remains fail-closed and the private bridge bearer is not shipped in Plugin files.
 

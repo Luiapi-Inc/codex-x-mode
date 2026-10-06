@@ -22,8 +22,8 @@ MCP key supplied through a secure environment rather than a command-line token:
 
 ```bash
 python3 -m bridge.client --url http://127.0.0.1:8240/mcp
-python3 -m bridge.client --url https://codex-x.lott0.online/mode/mcp
-python3 -m bridge.client --url https://codex-x.lott0.online/app/mcp
+python3 -m bridge.client --url https://codex-x-mode.lott0.online/mode/mcp
+python3 -m bridge.client --url https://codex-x-mode.lott0.online/app/mcp
 ```
 
 The client reads CODEX_X_MCP_TOKEN. Obtain its value locally through your secret
@@ -40,7 +40,7 @@ For Codex Desktop on the execution host, the Plugin owns both MCP declarations. 
 Use an existing user-controlled domain/certificate and persistent host. Run the
 bridge as the same unprivileged OS user that owns the configured repositories
 and Codex authentication, with private config mode 600 and restrictive umask.
-The bridge remains on loopback. The production remote transport is the Cloudflare Named Tunnel `codex-x-mode` with hostname `codex-x.lott0.online`. Its ingress allowlists only `/mode/mcp` and `/app/mcp`, both forwarded to the loopback bridge; the catch-all returns 404. Keep `/v1/`, `/healthz`, Actions routes, and all other bridge routes inaccessible through this public hostname. Tunnel credentials and configuration stay machine-local and outside Git.
+The bridge remains on loopback. The production remote transport is the Cloudflare Named Tunnel `codex-x-mode` with hostname `codex-x-mode.lott0.online`. Its ingress allowlists only `/mode/mcp` and `/app/mcp`, both forwarded to the loopback bridge; the catch-all returns 404. Keep `/v1/`, `/healthz`, Actions routes, and all other bridge routes inaccessible through this public hostname. Tunnel credentials and configuration stay machine-local and outside Git.
 
 Absent Origin is accepted for server-to-server clients; supplied Origin is
 denied unless explicitly present in allowed_origins in private config. Do not
@@ -50,8 +50,8 @@ add a wildcard. Configure only a host's observed required origins.
 
 The Plugin package owns MCP installation metadata; do not make users add duplicate MCP URLs in ChatGPT or Codex configuration. The execution host exposes the two stable Cloudflare Named Tunnel endpoints:
 
-- `https://codex-x.lott0.online/mode/mcp` for `codex-x-mode`
-- `https://codex-x.lott0.online/app/mcp` for `codex-x-app`
+- `https://codex-x-mode.lott0.online/mode/mcp` for `codex-x-mode`
+- `https://codex-x-mode.lott0.online/app/mcp` for `codex-x-app`
 
 Remote access stays authenticated. Never put the bridge's static `mcp_key` into `mcp.json`, `.mcp.json`, `.app.json`, Skill metadata, or hosted Plugin files. A ChatGPT remote MCP binding must use a supported authenticated server integration; write-capable/user-specific remote MCP must not be downgraded to anonymous access just to avoid connection setup. The Cloudflare tunnel is transport only and does not replace the MCP authorization boundary.
 

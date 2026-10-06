@@ -21,7 +21,7 @@ publication; mobile availability requires verification in the actual host.
 
 ## Local setup
 
-Plugin มี authoritative portable `mcp.json` ที่ประกาศ MCP สอง surface จาก runtime เดียวกันและติดตั้ง MCP identities มากับ Plugin โดยตรง ไม่ต้องเพิ่ม MCP ซ้ำใน user-level Codex config: `codex-x-mode` ที่ loopback `/mcp` และ `codex-x-app` ที่ loopback `/codex-x-app/mcp`. ทั้งคู่ไม่ฝัง credential; compatibility `.mcp.json` อ้าง `CODEX_X_MCP_TOKEN` เป็น `bearer_token_env_var`. Execution host expose remote aliases ผ่าน Cloudflare Named Tunnel ที่ `https://codex-x.lott0.online/mode/mcp` และ `https://codex-x.lott0.online/app/mcp`; remote authentication remains fail-closed and no static bearer secret is shipped in Plugin files. `codex-x-app` ใช้ Skill `codex-x-app-tool` ที่ ship ในโปรเจกต์นี้เองและ map ไป Native Codex app-server protocol โดยตรง ไม่พึ่ง `codex-app-tools@openai-bundled` ที่ runtime.
+Plugin มี authoritative portable `mcp.json` ที่ประกาศ MCP สอง surface จาก runtime เดียวกันและติดตั้ง MCP identities มากับ Plugin โดยตรง ไม่ต้องเพิ่ม MCP ซ้ำใน user-level Codex config: `codex-x-mode` ที่ loopback `/mcp` และ `codex-x-app` ที่ loopback `/codex-x-app/mcp`. ทั้งคู่ไม่ฝัง credential; compatibility `.mcp.json` อ้าง `CODEX_X_MCP_TOKEN` เป็น `bearer_token_env_var`. Execution host expose remote aliases ผ่าน Cloudflare Named Tunnel ที่ `https://codex-x-mode.lott0.online/mode/mcp` และ `https://codex-x-mode.lott0.online/app/mcp`; remote authentication remains fail-closed and no static bearer secret is shipped in Plugin files. `codex-x-app` ใช้ Skill `codex-x-app-tool` ที่ ship ในโปรเจกต์นี้เองและ map ไป Native Codex app-server protocol โดยตรง ไม่พึ่ง `codex-app-tools@openai-bundled` ที่ runtime.
 
 ```bash
 cd <plugin-root>/server
