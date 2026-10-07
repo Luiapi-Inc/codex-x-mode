@@ -276,7 +276,7 @@ def list_models(config, required_prefix=None, *, native_isolated=False):
             backend="codex_app_server",
             native_isolated=native_isolated,
         )
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.22"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.23"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
@@ -391,7 +391,7 @@ def run_task(config, store, job, stop=None):
                 native_isolated=dispatch_origin == "web",
             )
         phase = "initialize"
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.22"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.23"}})
         app.send({"method": "initialized", "params": {}})
 
         if legacy_web_backend:

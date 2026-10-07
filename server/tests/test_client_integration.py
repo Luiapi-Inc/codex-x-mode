@@ -267,11 +267,13 @@ class ClientFailureTests(unittest.TestCase):
 
     def test_redirect_is_not_followed(self):
         hits = []
+        user_agents = []
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
             def do_POST(self):
                 hits.append(self.path)
+                user_agents.append(self.headers.get("User-Agent"))
                 self.send_response(307)
                 self.send_header("Location", "/leak")
                 self.send_header("Content-Length", "0")
@@ -284,6 +286,7 @@ class ClientFailureTests(unittest.TestCase):
                 with self.assertRaisesRegex(ClientError, "Redirect"):
                     client.connect()
             self.assertEqual(hits, ["/mcp"])
+            self.assertEqual(user_agents, ["Codex-X-Mode-MCP/0.2.23"])
         finally:
             server.shutdown()
             thread.join(3)

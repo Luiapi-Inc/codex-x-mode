@@ -1,7 +1,7 @@
 # Codex X Mode Source of Truth
 
-Date: 2026-10-06
-Status: Authoritative architecture checkpoint for v0.2.22 Cloudflare Named Tunnel candidate
+Date: 2026-10-07
+Status: Authoritative architecture checkpoint for v0.2.23 Cloudflare MCP client compatibility candidate
 
 ## Required execution path
 
@@ -142,17 +142,15 @@ These historical checkpoints document how the architecture evolved. For all new 
 
 ## Current state
 
-v0.2.22 is the active working-tree candidate on branch `feat/headless-web-route`. It adds backward-compatible public MCP aliases `/mode/mcp` and `/app/mcp`, while preserving the loopback `/mcp` and `/codex-x-app/mcp` endpoints used by the Plugin-owned MCP declarations. The full runtime/package suite is **111/111 PASS**, compile and `git diff --check` pass, and the deterministic runtime bundle double-build SHA-256 is `db2743b9372f88bc8d8039f0a7107913055acce3260f361f2e95bcd19bbc7790`.
+The v0.2.22 source/runtime/hosted Plugin alignment is now complete. The resident runtime remains v0.2.22 and healthy while the v0.2.23 patch is validated. Plugin Creator guarded update/read-back succeeded for the existing USER/PRIVATE Plugin plugins_6ac10a6f500881918a222dd8b7693752; the hosted v0.2.22 release is pluginrel_6ac598b1353881919aa062cf7c3e2468. Read-back confirms canonical hosted MCP endpoints https://codex-x-mode.lott0.online/mode/mcp and https://codex-x-mode.lott0.online/app/mcp, plus bundled Skills codex-x-mode, codex-x-app-tool, and codex-x-mode-maintainer.
 
-The Mac LaunchAgent runs `$HOME/.local/share/codex-x-mode/releases/0.2.22/server` and health reports `up`. A Cloudflare Named Tunnel named `codex-x-mode` routes `codex-x-mode.lott0.online` to loopback with an ingress allowlist for only `/mode/mcp` and `/app/mcp`. Canonical-host boundary verification returns 404 for the hostname root and `/v1/*`, while unauthenticated POSTs to both MCP aliases return 401. The runtime package exposes `codex-x-mode 0.2.22` with 13 tools and `codex-x-app 0.2.22` with 8 tools under the same bearer-auth boundary; authenticated hosted-connector verification remains part of the Plugin migration gate.
+v0.2.23 is the active source candidate on branch feat/headless-web-route. It changes only the bundled remote MCP readiness client transport identity: Python urllib's default Python-urllib/3.14 User-Agent was rejected by Cloudflare Browser Integrity Check with Error 1010 before the request reached the bridge, while the same authenticated initialize request succeeded with Codex-X-Mode-MCP/0.2.22, OpenAI-Connector/1.0, curl/8.7.1, and Mozilla/5.0. The patch therefore sends User-Agent: Codex-X-Mode-MCP/0.2.23; it does not weaken bearer authentication, tunnel routing, Cloudflare policy, model routing, or the Native-Codex-owned inference boundary.
 
-The Plugin package continues to own both MCP declarations through `mcp.json` / compatibility `.mcp.json`; users must not add duplicate MCP entries to user-level Codex configuration. Remote authentication remains fail-closed and the private bridge bearer is not shipped in Plugin files.
+The canonical public boundary remains fail-closed: hostname root and /v1/* are unavailable, and unauthenticated POSTs to /mode/mcp and /app/mcp return 401. Loopback MCP discovery on the deployed v0.2.22 runtime reports native_codex_owns_inference=true, Web/local execution backend codex_app_server, no browser requirement, and live_codex_verified=false.
 
-The hosted private Plugin is still the previous v0.2.21 release `pluginrel_6ac4280598ac8191a6218291e7c92400` while the v0.2.22 candidate is being completed. Its existing `.app.json` binding therefore must not be treated as evidence that ChatGPT Web is already using the new Cloudflare endpoints. A supported authenticated remote MCP binding is required before publishing/migrating the hosted connection; the bridge must not be made anonymous and the private static bearer must not be embedded in Plugin metadata.
+v0.2.23 source validation is complete: focused client tests 17/17 PASS, full runtime/package suite 111/111 PASS, Python compile/import and git diff --check PASS, canonical source-client mode discovery PASS, canonical no-inference app discovery PASS, and deterministic bundle double-build PASS. Runtime bundle SHA-256 is 67ebbece99bfed4a2671f01575497f1e3263e5b35ea60b88bdef11d0a47a8c4e. Plugin Autopilot clean staging finds all three bundled Skills and only the four public-directory legal metadata blockers. Exact v0.2.23 runtime deployment and the corresponding hosted Plugin guarded update remain pending. No live model inference is part of this transport-fix validation.
 
-The hosted v0.2.22 archive/file handoff itself has been proven independently. A fresh retry on 2026-10-06 used product commit `3dd3f6ce789f232d664b6438e63c2c5a166cc543`, temporary workflow commit `b478034a301208b23684448876ff4ce91a2ea817`, GitHub Actions run `37470718059`, and artifact `11416427321`. The artifact wrapper SHA-256 was `bb24f05bf29dae4cacbf5b7b14fd12ce37083835de3cde88b42d04f30689511d`; the extracted hosted Plugin ZIP SHA-256 was `13d33e4b7efba9be4f0d85ddd726dcdf27a425a28967b98295bf8a93117bd691`. Read-back of the ZIP confirmed v0.2.22 manifests, hosted `/mode/mcp` + `/app/mcp` endpoints, and the bundled `codex-x-app-tool` Skill. `Plugin Creator.list_owned_personal_plugins` still read the existing USER/PRIVATE Plugin as v0.2.21 / `pluginrel_6ac4280598ac8191a6218291e7c92400`, while `get_plugin_metadata`, `get_plugin_files`, and guarded `update_plugin` returned `Resource not found` after rediscovery. No hosted mutation was confirmed, so v0.2.21 remains authoritative until a guarded Plugin Creator update and release read-back both succeed. Evidence: `docs/evidence/2026-10-06-v0.2.22-plugin-creator-handoff-retry.md`.
-
-`live_codex_verified` remains `false`. No successful terminal inference with exact observed model identity has been proven under the corrected Native-Codex-owned path yet, and Mobile E2E remains unverified.
+live_codex_verified remains false. No successful terminal inference with exact observed model identity has been proven under the corrected Native-Codex-owned path yet, and Mobile E2E remains unverified.
 
 ## Acceptance gates
 

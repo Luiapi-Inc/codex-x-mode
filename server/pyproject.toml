@@ -1,6 +1,6 @@
 [project]
 name = "codex-x-mode-bridge"
-version = "0.2.22"
+version = "0.2.23"
 description = "Self-contained Codex X Mode MCP, backend relay, and dispatch bridge"
 requires-python = ">=3.11"
 dependencies = []

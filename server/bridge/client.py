@@ -70,7 +70,8 @@ class MCPClient:
         if self.url:
             headers = {"Authorization": "Bearer " + self.token,
                        "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-                       "MCP-Protocol-Version": self.version}
+                       "MCP-Protocol-Version": self.version,
+                       "User-Agent": "Codex-X-Mode-MCP/0.2.23"}
             if self.version == MODERN_VERSION:
                 headers["Mcp-Method"] = request["method"]
                 params = request["params"]
@@ -126,7 +127,7 @@ class MCPClient:
         if self.version == MODERN_VERSION:
             params["_meta"] = {"io.modelcontextprotocol/protocolVersion": self.version,
                                "io.modelcontextprotocol/clientCapabilities": {},
-                               "io.modelcontextprotocol/clientInfo": {"name": "codex-x-client", "version": "0.2.22"}}
+                               "io.modelcontextprotocol/clientInfo": {"name": "codex-x-client", "version": "0.2.23"}}
         self.counter += 1
         request = {"jsonrpc": "2.0", "method": method, "params": params}
         if not notification:
@@ -143,7 +144,7 @@ class MCPClient:
                     raise ClientError("Server does not support selected protocol")
             else:
                 result = self._request("initialize", {"protocolVersion": self.version,
-                    "capabilities": {}, "clientInfo": {"name": "codex-x-client", "version": "0.2.22"}})
+                    "capabilities": {}, "clientInfo": {"name": "codex-x-client", "version": "0.2.23"}})
                 negotiated = result.get("protocolVersion")
                 if negotiated not in LEGACY_VERSIONS:
                     raise ClientError("Unsupported negotiated protocol")
