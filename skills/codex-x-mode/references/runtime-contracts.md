@@ -42,8 +42,10 @@ requested/default or parent model against Native Codex `model/list`, then send
 the exact ID and supported effort.
 Messages to an existing thread require that thread's model to remain an exact
 listed Web model; idle turns send the ID and effort explicitly, while steering
-keeps the active turn's already selected Native model. Local stdio App calls
-retain local Native Codex model behavior.
+is allowed only when the thread's current effort matches the selected supported
+effort. Missing or mismatched effort fails closed because Native
+`turn/steer` cannot change model or effort. Local stdio App calls retain local
+Native Codex model behavior.
 
 The bridge records requested and selected model identity. A completed task is
 accepted only when the terminal event reports that exact model without reroute.

@@ -272,6 +272,54 @@ class CodexXAppContractTests(unittest.TestCase):
         self.assertEqual(turn["model"], model_id)
         self.assertEqual(turn["effort"], "high")
 
+    def test_web_send_message_refuses_to_steer_active_turn_with_unverified_effort(self):
+        config = dict(self.config, _dispatch_origin="web")
+        root = config["projects"]["demo"]["cwd"]
+        model_id = "chatgpt-web/gpt-5.6-sol"
+        for active_effort in (None, "low"):
+            with self.subTest(active_effort=active_effort):
+                thread = {
+                    "id": "thread-web-active", "cwd": root, "model": model_id,
+                    "effort": active_effort, "modelProvider": "openai", "sandbox": "read-only",
+                    "turns": [{"id": "turn-active", "status": "inProgress", "items": []}],
+                }
+                fake = FakeApp({
+                    "thread/read": {"thread": thread},
+                    "model/list": {"data": [{
+                        "id": model_id, "model": model_id, "isDefault": True,
+                        "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                        "defaultReasoningEffort": "high",
+                    }]},
+                    "turn/steer": {"turnId": "turn-active"},
+                })
+                with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+                    with self.assertRaises(Fault):
+                        codex_x_app.send_message_to_thread(
+                            config, {"threadId": thread["id"], "prompt": "Continue"}, self.store,
+                        )
+                self.assertNotIn("turn/steer", [method for method, _ in fake.calls])
+
+        verified_thread = {
+            "id": "thread-web-active-verified", "cwd": root, "model": model_id,
+            "effort": "high", "modelProvider": "openai", "sandbox": "read-only",
+            "turns": [{"id": "turn-active", "status": "inProgress", "items": []}],
+        }
+        verified_fake = FakeApp({
+            "thread/read": {"thread": verified_thread},
+            "model/list": {"data": [{
+                "id": model_id, "model": model_id, "isDefault": True,
+                "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                "defaultReasoningEffort": "high",
+            }]},
+            "turn/steer": {"turnId": "turn-active"},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(verified_fake)):
+            result = codex_x_app.send_message_to_thread(
+                config, {"threadId": verified_thread["id"], "prompt": "Continue"}, self.store,
+            )
+        self.assertEqual(result["mode"], "steer")
+        self.assertIn("turn/steer", [method for method, _ in verified_fake.calls])
+
     def test_web_fork_with_prompt_pins_parent_model_and_supported_effort(self):
         config = dict(self.config, _dispatch_origin="web")
         root = config["projects"]["demo"]["cwd"]

@@ -588,6 +588,8 @@ def send_message_to_thread(config, args, store=None):
         turns = thread.get("turns") if isinstance(thread.get("turns"), list) else []
         active = [turn for turn in turns if isinstance(turn, dict) and turn.get("status") == "inProgress" and isinstance(turn.get("id"), str)]
         if active:
+            if web_model is not None and thread.get("effort") != web_model["reasoning_effort"]:
+                raise Fault(409, "Cannot verify the active Native Codex Web reasoning effort")
             turn_id = app.call("turn/steer", {
                 "threadId": thread["id"],
                 "expectedTurnId": active[-1]["id"],
