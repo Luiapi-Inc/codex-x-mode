@@ -215,6 +215,7 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
         model_id = selected.get("id")
         model = selected.get("model")
         if (not isinstance(model_id, str) or not model_id.startswith(required_prefix)
+                or not model_id[len(required_prefix):].strip()
                 or model != model_id):
             raise ModelSelectionError("Native Codex did not expose an exact Web model identity")
     raw_supported = selected.get("supportedReasoningEfforts", selected.get("supported_reasoning_efforts", []))

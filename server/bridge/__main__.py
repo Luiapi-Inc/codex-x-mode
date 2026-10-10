@@ -5,7 +5,6 @@ import secrets
 import subprocess
 import threading
 import fcntl
-import uuid
 from pathlib import Path
 
 from .core import Store
@@ -13,7 +12,6 @@ from .http import Server
 from .mcp import serve_stdio
 from .codex import worker
 from .schema import dump
-from . import siwc
 
 
 def default_config_path():
@@ -34,7 +32,7 @@ def main():
     setup.add_argument("--project", required=True)
     setup.add_argument("--cwd", required=True)
     setup.add_argument("--allow-write", action="store_true")
-    setup.add_argument("--model-version", help="Preferred packaged chatgpt-web alias to use when an entitled web request omits model_version")
+    setup.add_argument("--model-version", help="Preferred exact chatgpt-web/<version> ID from Native Codex model/list")
     serve = commands.add_parser("serve")
     serve.add_argument("--port", type=int, default=8240)
     commands.add_parser("mcp-stdio")
@@ -47,11 +45,6 @@ def main():
     codex = commands.add_parser("codex")
     codex.add_argument("--port", type=int, default=8240)
     codex.add_argument("args", nargs=argparse.REMAINDER)
-    commands.add_parser("siwc-login")
-    commands.add_parser("siwc-status")
-    commands.add_parser("siwc-host-id")
-    siwc_import = commands.add_parser("siwc-import")
-    siwc_import.add_argument("--file", required=True, help="Protected mode-600 credential file transferred securely from the same tool/account")
     args = parser.parse_args()
     os.umask(0o077)
     config_path = Path(args.config).resolve()
@@ -67,8 +60,7 @@ def main():
                   "mcp_key": secrets.token_urlsafe(32),
                   "projects": {args.project: {"cwd": str(cwd), "allow_write": args.allow_write}},
                   "codex_command": ["codex"], "backend_timeout_seconds": 600, "task_timeout_seconds": 600,
-                  "ext_agent_host_id": "urn:uuid:" + str(uuid.uuid4()),
-                  "siwc_credentials_file": str(config_path.with_suffix(".siwc.json"))}
+                  }
         if args.model_version is not None:
             config["chatgpt_web_default_model"] = args.model_version
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,19 +81,6 @@ def main():
         parser.error("Use distinct GPT and provider keys")
     if isinstance(config.get("mcp_key"), str) and config["mcp_key"] in (config["gpt_key"], config["provider_key"]):
         parser.error("Use a distinct MCP key")
-    if args.command.startswith("siwc-"):
-        try:
-            if args.command == "siwc-login":
-                siwc.login(config)
-            elif args.command == "siwc-import":
-                print(json.dumps(siwc.import_credentials(config, args.file)))
-            elif args.command == "siwc-host-id":
-                print(siwc._write_host_id(config))
-            else:
-                print(json.dumps(siwc.authorization_status(config)))
-        except (siwc.SiwcError, OSError) as exc:
-            parser.error(str(exc) if isinstance(exc, siwc.SiwcError) else "Protected credential operation failed")
-        return
     if args.command == "show-key":
         value = config.get(args.role + "_key")
         if not isinstance(value, str) or len(value) < 32:

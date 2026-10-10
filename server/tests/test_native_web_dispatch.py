@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from bridge import codex, service, siwc
+from bridge import codex, service
 from bridge.core import Fault, Store
 from bridge.mcp import _call_tool
 from bridge.service import create_task, continue_task
@@ -101,13 +101,11 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         self.assertEqual(payload["selected_model"]["model"], "chatgpt-web/gpt-5.6-sol")
         self.assertEqual(payload["selected_model"]["catalog_source"], "model/list")
 
-    def test_new_web_path_never_calls_siwc_inference(self):
-        with patch.object(siwc, "get_credentials", side_effect=AssertionError("SIWC forbidden")), \
-             patch.object(siwc, "list_models", side_effect=AssertionError("SIWC catalog forbidden")):
-            catalog = service.list_models(self.config)
-            self.assertEqual(catalog["backend"], "codex_app_server")
-            job = create_task(self.config, self.store, self.body())
-            codex.run_task(self.config, self.store, self.store.claim("task"))
+    def test_new_web_path_uses_native_execution_without_external_credentials(self):
+        catalog = service.list_models(self.config)
+        self.assertEqual(catalog["backend"], "codex_app_server")
+        job = create_task(self.config, self.store, self.body())
+        codex.run_task(self.config, self.store, self.store.claim("task"))
         result = self.store.get(job["id"])
         self.assertEqual(result["state"], "completed")
         self.assertTrue(result["result"]["model_selection"]["native_codex_owns_inference"])
@@ -155,6 +153,22 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
             create_task(self.config, self.store, self.body(
                 model_version="chatgpt-web/6-astra", request_key="blocked-upstream-model"
             ))
+        self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+
+    def test_web_rejects_family_prefix_without_concrete_version(self):
+        family_only = dict(NATIVE_CATALOG)
+        family_only["models"] = [{
+            "id": "chatgpt-web/",
+            "model": "chatgpt-web/",
+            "display_name": "Web family",
+            "is_default": True,
+            "default_reasoning_effort": "high",
+            "supported_reasoning_efforts": ["high"],
+        }]
+        self.native_catalog_mock.return_value = family_only
+        with self.assertRaises(Fault) as caught:
+            create_task(self.config, self.store, self.body(model_version="chatgpt-web/"))
         self.assertEqual(caught.exception.status, 400)
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
 
@@ -407,10 +421,8 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
                     "execution_backend": backend,
                 }, "legacy-" + backend)
                 claimed = self.store.claim("task")
-                with patch.object(siwc, "get_credentials", side_effect=AssertionError("legacy provider must not run")) as get_credentials, \
-                     patch.object(codex, "_app_server", side_effect=AssertionError("app-server must not launch")) as app_server:
+                with patch.object(codex, "_app_server", side_effect=AssertionError("app-server must not launch")) as app_server:
                     codex.run_task(self.config, self.store, claimed)
-                get_credentials.assert_not_called()
                 app_server.assert_not_called()
                 result = self.store.get(job["id"])
                 self.assertEqual(result["state"], "failed")

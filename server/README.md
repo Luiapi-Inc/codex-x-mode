@@ -7,10 +7,10 @@ It supports three surfaces on the same local state/config:
 | Surface | Purpose | Auth / transport |
 | --- | --- | --- |
 | MCP stdio | Local plugin/Codex/Desktop hosts | local process, no network auth |
-| MCP HTTP + GPT Actions | Web/mobile or Custom GPT through a user-controlled HTTPS reverse proxy | Bearer `mcp_key` / `gpt_key` |
+| MCP HTTP + GPT Actions | Canonical `/mode/mcp` gateway plus compatibility surfaces and Actions | Bearer `mcp_key` / `gpt_key` |
 | Responses provider | Local Codex backend turn relay | Bearer `provider_key`, keep private |
 
-The bridge owns one Codex app-server subprocess per dispatched task. Web inference routing and actual model identity are not verified by this package alone; a runtime must not claim them from a requested model name or echoed response.
+Web and local task dispatch use Native Codex app-server. Web exposes exact `chatgpt-web/<version>` IDs from Native Codex `model/list`, requires a supported model reasoning effort, and fails closed on missing or mismatched terminal identity. This package's fixture tests do not prove live inference.
 
 This remains a **prototype until live-verified with the user's actual Codex CLI and deployed HTTPS endpoint**. Existing full-suite evidence uses real loopback HTTP/SQLite plus explicit app-server protocol fixtures.
 
@@ -35,11 +35,10 @@ Stdio supports MCP `2026-07-28` and legacy handshake revisions `2025-11-25`, `20
 
 ## HTTP MCP / Actions
 
-HTTP-origin dispatch requires SIWC authorization and an explicit exact model
-or a configured exact default. Local stdio keeps its existing provider.
-Run `python3 -m bridge siwc-login` on the computer running the browser, then
-`python3 -m bridge siwc-status`. See [SIWC.md](SIWC.md) for protected VM import,
-backend/account binding, CLI commands and live verification limits.
+HTTP-origin and local stdio dispatch both use Native Codex app-server. No
+ChatGPT-plan/SIWC credentials are used for task inference. A Web model must be
+an exact `chatgpt-web/<version>` ID from Native Codex `model/list`; a supported
+reasoning effort is required before queue acceptance.
 
 ```bash
 python3 -m bridge serve
@@ -56,7 +55,7 @@ continue to work.
 ## Bundled MCP client
 
 `python3 -m bridge.client --config /absolute/private/config.json` checks stdio.
-`python3 -m bridge.client --url https://ACTUAL-HOST/mcp` checks HTTP with
+`python3 -m bridge.client --url https://ACTUAL-HOST/mode/mcp` checks HTTP with
 CODEX_X_MCP_TOKEN from the environment. Both commands perform only read-only
 discovery/status checks. The Python MCPClient API also supports explicit tool,
 resource and prompt operations, both protocol families, response ID validation,
@@ -67,11 +66,12 @@ for this bridge's JSON/stdio surfaces, not a general SSE/subscription SDK.
 See [WEB-CONNECTION.md](WEB-CONNECTION.md) for deployment and separate host,
 authentication and mobile acceptance gates.
 
-- `POST /mcp` — modern MCP `2026-07-28`, Bearer `mcp_key`
+- `POST /mode/mcp` — canonical unified MCP with 13 Core + 8 namespaced App tools, Bearer `mcp_key`
+- `POST /mcp`, `/app/mcp`, `/codex-x-app/mcp` — authenticated compatibility surfaces
 - Actions routes (`/status`, `/projects`, project reads, `/tasks...`, `/backend...`) — Bearer `gpt_key`
 - `/v1/...` — private Responses provider, Bearer `provider_key`
 
-For web/mobile, reverse-proxy only intended MCP/Actions routes over HTTPS. Keep `/v1/` blocked publicly. This package does not invent or ship a public endpoint.
+For web/mobile, reverse-proxy `/mode/mcp` and only intended Actions routes over HTTPS. Keep `/v1/` blocked publicly. This package does not invent or ship a public endpoint.
 
 ## Backend flow
 

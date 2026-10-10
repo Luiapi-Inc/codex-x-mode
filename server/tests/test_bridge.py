@@ -484,6 +484,11 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("/models", value["paths"])
         properties = value["paths"]["/tasks"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
         self.assertIn("model_version", properties)
+        model_contract = properties["model_version"]["description"]
+        self.assertIn("chatgpt-web/<version>", model_contract)
+        self.assertIn("Native Codex", model_contract)
+        self.assertNotIn("ChatGPT-plan", model_contract)
+        self.assertNotIn("chatgpt_plan_default_model", model_contract)
         with self.assertRaises(ValueError):
             schema("http://localhost")
 

@@ -6,7 +6,7 @@ Run it in the environment that owns the installed runtime; do not infer remote
 readiness from this chat's scratch environment.
 
 - Stdio: python3 -m bridge.client --config /absolute/private/config.json
-- HTTP: python3 -m bridge.client --url https://ACTUAL-HOST/mcp
+- HTTP: python3 -m bridge.client --url https://ACTUAL-HOST/mode/mcp
 - Supply CODEX_X_MCP_TOKEN through the target environment's secret handling.
   Never request it in chat or put it in a task prompt.
 - Default compatibility protocol is 2025-11-25. Use --protocol 2026-07-28

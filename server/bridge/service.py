@@ -7,7 +7,6 @@ from pathlib import Path
 
 from .codex import ModelSelectionError, _select_model, list_models as codex_list_models
 from .core import Fault, encoded, fields, project_config, text
-from . import siwc
 
 
 MAX_FILE_BYTES = 1024 * 1024
@@ -29,7 +28,8 @@ def _native_web_catalog(config):
         if not isinstance(item, dict):
             continue
         model_id = item.get("id")
-        if not isinstance(model_id, str) or not model_id.startswith(WEB_MODEL_PREFIX):
+        if (not isinstance(model_id, str) or not model_id.startswith(WEB_MODEL_PREFIX)
+                or not model_id[len(WEB_MODEL_PREFIX):].strip()):
             continue
         if item.get("model") != model_id:
             raise Fault(503, "Native Codex Web model identity is inconsistent")
@@ -422,10 +422,10 @@ def continue_task(config, store, task_id, body):
         raise Fault(409, "Follow-up cannot change the parent execution backend")
     parent_origin = parent["payload"].get("dispatch_origin")
     if parent_origin is None:
-        parent_origin = "web" if parent_backend == "chatgpt_plan" else "local"
+        parent_origin = "local"
     if parent_origin != _origin(config):
         raise Fault(409, "Follow-up cannot change the parent dispatch origin")
-    payload = {key: value for key, value in parent["payload"].items() if key not in ("selected_model", "siwc_registration", "execution_backend")}
+    payload = {key: value for key, value in parent["payload"].items() if key not in ("selected_model", "execution_backend")}
     # Preserve the actual selected model for a follow-up, including a configured
     # default used by a parent whose original request omitted model_version.
     if parent["payload"].get("selected_model"):

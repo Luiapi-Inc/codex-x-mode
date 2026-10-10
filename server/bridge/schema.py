@@ -28,7 +28,7 @@ def schema(base_url):
     project_param = {"name": "project_id", "in": "path", "required": True, "schema": string}
     add("/status", "get", "getStatus", "Read bridge capability and recovery status.")
     add("/projects", "get", "listProjects", "List configured projects and whether writes are allowed.")
-    add("/models", "get", "listModels", "Read token-scoped listed ChatGPT-plan models for web dispatch; SIWC authorization is required. Listing does not prove inference entitlement or change the current ChatGPT conversation model.")
+    add("/models", "get", "listModels", "Read the Native Codex model/list catalog. Web dispatch exposes only exact chatgpt-web/<version> IDs with their supported/default reasoning-effort metadata. Listing does not prove terminal inference or change the current ChatGPT conversation model.")
     add("/projects/{project_id}/directory", "get", "listProjectDirectory", "List a directory inside an allowlisted project without escaping its root.",
         params=[project_param,
                 {"name": "path", "in": "query", "required": False, "schema": {"type": "string", "default": "."}},
@@ -52,11 +52,11 @@ def schema(base_url):
     add("/tasks", "post", "createCodexTask", "Start a user-authorized task in a configured project. Reuse request_key only for retries.",
         body_schema(["project_id", "prompt", "scope", "request_key"],
                     {"project_id": string, "prompt": string, "scope": {"type": "string", "enum": ["read-only", "workspace-write"]},
-                     "request_key": string, "model_version": {"type": "string", "description": "Exact ChatGPT-plan model slug returned by GET /models. Omission requires chatgpt_plan_default_model. Valid authorization/scopes and listed model are required before new queue acceptance. A retry recovers the original job first. Completed execution must report the exact model without reroute or remains unknown."}}), consequential=True, success=202)
+                     "request_key": string, "model_version": {"type": "string", "description": "Exact chatgpt-web/<version> ID returned by GET /models for Web-origin dispatch. Omission uses a configured exact Web default when valid or an unambiguous Native Codex account default. Unsupported model IDs or efforts fail before queue acceptance. Retries recover the original job; completed execution must report the exact terminal model without reroute or remains unknown."}}), consequential=True, success=202)
     add("/tasks/{id}", "get", "readCodexTask", "Read a task status and available evidence without sending another turn.", params=[job_param])
     add("/tasks/{id}/followups", "post", "continueCodexTask", "Send an explicitly authorized follow-up after the parent completes. Scope stays unchanged.",
         body_schema(["prompt", "request_key"], {"prompt": string, "request_key": string,
-                                                   "model_version": {"type": "string", "description": "Optional exact ChatGPT-plan model slug returned by GET /models; omission retains the parent's selected model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."}}), [job_param], True, success=202)
+                                                   "model_version": {"type": "string", "description": "Optional exact Native Codex model ID returned by GET /models; omission retains the parent's selected model. Execution remains with the parent's backend and dispatch origin. This does not change the current ChatGPT conversation model."}}), [job_param], True, success=202)
     add("/tasks/{id}/cancel", "post", "cancelCodexTask", "Cancel a queued task or request cancellation of a running task. Unknown execution remains fail-closed.",
         body_schema(["request_key"], {"request_key": string}), [job_param], True)
     return {"openapi": "3.1.0", "info": {"title": "Codex X Mode Bridge", "version": "0.2.12"},

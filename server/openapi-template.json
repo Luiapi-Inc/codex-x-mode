@@ -53,7 +53,7 @@
     "/models": {
       "get": {
         "operationId": "listModels",
-        "summary": "Read token-scoped listed ChatGPT-plan models for web dispatch; SIWC authorization is required. Listing does not prove inference entitlement or change the current ChatGPT conversation model.",
+        "summary": "Read the Native Codex model/list catalog. Web dispatch exposes only exact chatgpt-web/<version> IDs with their supported/default reasoning-effort metadata. Listing does not prove terminal inference or change the current ChatGPT conversation model.",
         "x-openai-isConsequential": false,
         "responses": {
           "200": {
@@ -434,7 +434,7 @@
                   },
                   "model_version": {
                     "type": "string",
-                    "description": "Exact ChatGPT-plan model slug returned by GET /models. Omission requires chatgpt_plan_default_model. Valid authorization/scopes and listed model are required before new queue acceptance. A retry recovers the original job first. Completed execution must report the exact model without reroute or remains unknown."
+                    "description": "Exact chatgpt-web/<version> ID returned by GET /models for Web-origin dispatch. Omission uses a configured exact Web default when valid or an unambiguous Native Codex account default. Unsupported model IDs or efforts fail before queue acceptance. Retries recover the original job; completed execution must report the exact terminal model without reroute or remains unknown."
                   }
                 }
               }
@@ -511,7 +511,7 @@
                   },
                   "model_version": {
                     "type": "string",
-                    "description": "Optional exact ChatGPT-plan model slug returned by GET /models; omission retains the parent's selected model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."
+                    "description": "Optional exact Native Codex model ID returned by GET /models; omission retains the parent's selected model. Execution remains with the parent's backend and dispatch origin. This does not change the current ChatGPT conversation model."
                   }
                 }
               }

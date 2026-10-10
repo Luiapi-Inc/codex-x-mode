@@ -56,7 +56,7 @@ TOOLS = [
     },
     {
         "name": "codex_x_list_models",
-        "description": "Read the package-filtered Native Codex model catalog. Web and local dispatch both use Native Codex app-server model/list; Web exposes only packaged chatgpt-web aliases mapped to exact Native Codex model IDs. Listing does not prove terminal inference or change this ChatGPT conversation model.",
+        "description": "Read Native Codex app-server model/list. Web dispatch exposes only exact chatgpt-web/<version> IDs whose executable model equals the ID, with Native Codex supported/default reasoning-effort metadata. Listing does not prove terminal inference or change this ChatGPT conversation model.",
         "inputSchema": _schema(),
         "annotations": {"readOnlyHint": True, "destructiveHint": False},
     },
@@ -95,7 +95,7 @@ TOOLS = [
                 "prompt": {"type": "string"},
                 "scope": {"type": "string", "enum": ["read-only", "workspace-write"]},
                 "request_key": {"type": "string"},
-                "model_version": {"type": "string", "description": "Exact model alias from codex_x_list_models. Web aliases are package-filtered mappings onto Native Codex model/list; unsupported aliases fail before queue acceptance. Native Codex owns authentication and inference. The current conversation model is unchanged; completed execution needs exact terminal model identity without reroute."},
+                "model_version": {"type": "string", "description": "Exact model ID from codex_x_list_models. Web accepts only concrete chatgpt-web/<version> IDs present in Native Codex model/list and sends an effort supported by that model. Unsupported IDs or efforts fail before queue acceptance. Native Codex owns authentication and inference; completion requires exact terminal model identity without reroute."},
             },
             ["project_id", "prompt", "scope", "request_key"],
         ),
@@ -112,7 +112,7 @@ TOOLS = [
         "description": "Send an explicitly authorized follow-up to a completed task; project and scope cannot broaden.",
         "inputSchema": _schema(
             {"task_id": {"type": "string"}, "prompt": {"type": "string"}, "request_key": {"type": "string"},
-             "model_version": {"type": "string", "description": "Optional exact active-backend model ID; omission retains the parent selected dispatch model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."}},
+             "model_version": {"type": "string", "description": "Optional exact Native Codex model ID; omission retains the parent selected dispatch model. Backend and dispatch origin cannot change. This does not change the current ChatGPT conversation model."}},
             ["task_id", "prompt", "request_key"],
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": False},

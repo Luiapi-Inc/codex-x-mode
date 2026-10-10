@@ -5,9 +5,10 @@ model discovery is restricted to exact `chatgpt-web/*` IDs from Native Codex
 `model/list`; a selected model snapshot records its exact ID and supported/default
 reasoning effort before queue acceptance, and execution revalidates that snapshot
 before `thread/start`. A supported effort is sent explicitly on `turn/start`.
-New Web tasks never select `chatgpt_plan`; that path remains only for recovery
-of persisted pre-0.2.12 tasks. Exact-model acceptance remains fail-closed when
-terminal model identity is absent or a reroute is observed.
+New Web tasks never select `chatgpt_plan`. Persisted jobs naming retired Web
+providers fail before launching them and are never replayed through another
+provider. Exact-model acceptance remains fail-closed when terminal model
+identity is absent or a reroute is observed.
 
 Private plugin สำหรับ ChatGPT/Codex ที่รวม **skill + MCP tools + bridge runtime** ไว้ใน package เดียว ไม่ต้องพึ่ง plugin หรือ skill อื่นเพื่อทำ Backend/Dispatch workflow หลัก
 
