@@ -5,40 +5,36 @@ import secrets
 import stat
 from pathlib import Path
 
-from .codex import ModelSelectionError, list_models as codex_list_models
+from .codex import ModelSelectionError, _select_model, list_models as codex_list_models
 from .core import Fault, encoded, fields, project_config, text
 from . import siwc
 
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_DIR_ENTRIES = 500
-WEB_MODEL_REGISTRY_PATH = Path(__file__).with_name("web_models.json")
 
 
-def _web_model_routes():
+WEB_MODEL_PREFIX = "chatgpt-web/"
+
+
+def _native_web_catalog(config):
     try:
-        data = json.loads(WEB_MODEL_REGISTRY_PATH.read_text())
-        models = data.get("models", [])
-    except (OSError, ValueError, TypeError) as exc:
-        raise Fault(500, "Packaged Web model registry is unavailable") from exc
-    routes = {}
-    for item in models:
+        catalog = codex_list_models(
+            config, required_prefix=WEB_MODEL_PREFIX, native_isolated=True,
+        )
+    except (ModelSelectionError, OSError, RuntimeError) as exc:
+        raise Fault(503, "Native Codex Web model catalog is unavailable") from exc
+    models = []
+    for item in catalog.get("models", []):
         if not isinstance(item, dict):
-            raise Fault(500, "Packaged Web model registry is invalid")
-        alias = item.get("id")
-        slug = item.get("slug")
-        priority = item.get("priority", 0)
-        if (not isinstance(alias, str) or not alias.startswith("chatgpt-web/")
-                or not isinstance(slug, str) or not slug
-                or not isinstance(priority, int) or isinstance(priority, bool)):
-            raise Fault(500, "Packaged Web model registry is invalid")
-        if alias in routes:
-            raise Fault(500, "Packaged Web model registry contains duplicate model ids")
-        routes[alias] = {"slug": slug, "priority": priority,
-                         "display_name": item.get("display_name", slug)}
-    if not routes:
-        raise Fault(500, "Packaged Web model registry is empty")
-    return routes
+            continue
+        model_id = item.get("id")
+        if not isinstance(model_id, str) or not model_id.startswith(WEB_MODEL_PREFIX):
+            continue
+        if item.get("model") != model_id:
+            raise Fault(503, "Native Codex Web model identity is inconsistent")
+        models.append(item)
+    return catalog, models
 
 
 def public_job(job):
@@ -89,39 +85,20 @@ def list_projects(config):
 
 def list_models(config):
     if _origin(config) == "web":
-        try:
-            catalog = codex_list_models(config, native_isolated=True)
-        except (ModelSelectionError, OSError, RuntimeError) as exc:
-            raise Fault(503, "Native Codex model catalog is unavailable") from exc
-        by_id = {item.get("id"): item for item in catalog.get("models", []) if isinstance(item, dict)}
-        routes = _web_model_routes()
+        catalog, models = _native_web_catalog(config)
+        ids = {item["id"] for item in models}
         configured_default = config.get("chatgpt_web_default_model")
-        available_aliases = [alias for alias, route in routes.items() if route["slug"] in by_id]
-        resolved_default = configured_default if configured_default in available_aliases else None
-        if resolved_default is None and available_aliases:
-            resolved_default = max(available_aliases, key=lambda alias: routes[alias]["priority"])
-        models = []
-        for alias, route in routes.items():
-            slug = route["slug"]
-            item = by_id.get(slug)
-            if item is None:
-                continue
-            models.append({
-                "id": alias,
-                "model": slug,
-                "display_name": item.get("display_name", route["display_name"]),
-                "is_default": alias == resolved_default,
-                "default_reasoning_effort": item.get("default_reasoning_effort"),
-                "supported_reasoning_efforts": list(item.get("supported_reasoning_efforts", [])),
-            })
+        resolved_default = configured_default if configured_default in ids else None
+        if resolved_default is None:
+            defaults = [item["id"] for item in models if item.get("is_default") is True]
+            if len(defaults) == 1:
+                resolved_default = defaults[0]
         return {
-            "backend": "codex_app_server",
-            "catalog_source": "model/list",
-            "catalog_integrity_verified": True,
-            "model_entitlement_verified": False,
+            key: value for key, value in catalog.items() if key != "models"
+        } | {
             "native_codex_owns_inference": True,
             "route_prefix": "chatgpt-web/",
-            "supported_models": list(routes),
+            "supported_models": [item["id"] for item in models],
             "resolved_default_model": resolved_default,
             "models": models,
         }
@@ -138,45 +115,29 @@ def _backend(config):
 
 
 def _web_model_snapshot(config, requested):
-    try:
-        catalog = codex_list_models(config, native_isolated=True)
-    except (ModelSelectionError, OSError, RuntimeError) as exc:
-        raise Fault(503, "Native Codex model catalog is unavailable") from exc
-
-    routes = _web_model_routes()
-    by_id = {item.get("id"): item for item in catalog.get("models", []) if isinstance(item, dict)}
-    available_aliases = [alias for alias, route in routes.items() if route["slug"] in by_id]
-    if not available_aliases:
-        raise Fault(400, "Native Codex account has no package-supported Web model")
-
+    _, models = _native_web_catalog(config)
     selected_id = requested
     source = "requested"
     if selected_id in (None, "chatgpt-web"):
         configured = config.get("chatgpt_web_default_model")
-        if configured in available_aliases:
+        if isinstance(configured, str) and any(item["id"] == configured for item in models):
             selected_id = configured
             source = "configured_default"
         else:
-            selected_id = max(available_aliases, key=lambda alias: routes[alias]["priority"])
-            source = "native_catalog_fallback"
-
-    route = routes.get(selected_id)
-    if route is None:
-        raise Fault(400, "Unsupported Web model; allowed: " + ", ".join(routes))
-    slug = route["slug"]
-    native = by_id.get(slug)
-    if native is None:
-        raise Fault(400, "Requested Web model is unavailable to Native Codex")
-    return {
-        "id": selected_id,
-        "model": slug,
-        "display_name": native.get("display_name", route["display_name"]),
-        "source": source,
-        "reasoning_effort": config.get("chatgpt_web_reasoning_effort"),
-        "default_reasoning_effort": native.get("default_reasoning_effort"),
-        "supported_reasoning_efforts": list(native.get("supported_reasoning_efforts", [])),
-        "catalog_source": "model/list",
-    }
+            selected_id = None
+            source = "account_default"
+    try:
+        selected = _select_model(
+            models,
+            selected_id,
+            required_prefix=WEB_MODEL_PREFIX,
+            reasoning_effort=config.get("chatgpt_web_reasoning_effort"),
+        )
+    except ModelSelectionError as exc:
+        raise Fault(400, "Requested exact ChatGPT Web model is unavailable or invalid") from exc
+    selected["source"] = source if source != "requested" else selected["source"]
+    selected["catalog_source"] = "model/list"
+    return selected
 
 
 def _retry_task(store, request_key, payload):

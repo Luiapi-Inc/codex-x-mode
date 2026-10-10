@@ -285,8 +285,8 @@ class DispatchDiagnosticsTests(unittest.TestCase):
                 "supported_reasoning_efforts": ["medium"],
             },
             {
-                "id": "gpt-5.6-sol", "model": "gpt-5.6-sol",
-                "display_name": "Headless Fixture Model", "is_default": False,
+                "id": "chatgpt-web/gpt-5.6-sol", "model": "chatgpt-web/gpt-5.6-sol",
+                "display_name": "Fixture ChatGPT Web Model", "is_default": False,
                 "default_reasoning_effort": "high",
                 "supported_reasoning_efforts": ["medium", "high"],
             },
@@ -565,7 +565,7 @@ class HTTPTests(unittest.TestCase):
         self.config = {"gpt_key": "g" * 40, "provider_key": "p" * 40, "mcp_key": "m" * 40,
                        "projects": {"demo": {"cwd": str(root.resolve()), "allow_write": False}},
                        "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
-                       "chatgpt_web_default_model": "chatgpt-web/fixture-model",
+                       "chatgpt_web_default_model": "chatgpt-web/gpt-5.6-sol",
                        "backend_timeout_seconds": 2}
         self.server = Server(("127.0.0.1", 0), self.config, self.store, start_worker=False)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

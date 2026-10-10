@@ -12,7 +12,6 @@ from .core import Store
 from .http import Server
 from .mcp import serve_stdio
 from .codex import worker
-from .codex_catalog import CodexCatalogError, default_catalog_path, write_codex_catalog
 from .schema import dump
 from . import siwc
 
@@ -48,8 +47,6 @@ def main():
     codex = commands.add_parser("codex")
     codex.add_argument("--port", type=int, default=8240)
     codex.add_argument("args", nargs=argparse.REMAINDER)
-    codex_catalog = commands.add_parser("codex-catalog")
-    codex_catalog.add_argument("--output", default=str(default_catalog_path()))
     commands.add_parser("siwc-login")
     commands.add_parser("siwc-status")
     commands.add_parser("siwc-host-id")
@@ -110,13 +107,6 @@ def main():
         if not isinstance(value, str) or len(value) < 32:
             parser.error(f"{args.role} key is not configured")
         print(value)
-        return
-    if args.command == "codex-catalog":
-        try:
-            path = write_codex_catalog(config, args.output)
-        except (CodexCatalogError, OSError) as exc:
-            parser.error(str(exc))
-        print(path)
         return
     if args.command == "codex":
         # Native Codex owns authentication, catalog selection, and inference.

@@ -30,7 +30,7 @@ class ClientIntegrationTests(unittest.TestCase):
         self.config = {"gpt_key": "g" * 40, "provider_key": "p" * 40, "mcp_key": "m" * 40,
             "projects": {"demo": {"cwd": str(project.resolve()), "allow_write": False}},
             "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
-            "chatgpt_web_default_model": "chatgpt-web/fixture-model",
+            "chatgpt_web_default_model": "chatgpt-web/gpt-5.6-sol",
             "task_timeout_seconds": 5}
         self.config_path = self.root / "private.json"
         self.config_path.write_text(json.dumps(self.config))

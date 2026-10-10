@@ -232,7 +232,7 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
             matches = [item for item in eligible if item.get("id") == default_model]
             source = "configured_default"
         else:
-            matches = [item for item in eligible if item.get("isDefault") is True]
+            matches = [item for item in eligible if item.get("isDefault", item.get("is_default")) is True]
             source = "account_default"
         if len(matches) != 1:
             raise ModelSelectionError("Codex account has no unambiguous default model")
@@ -243,11 +243,25 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
             raise ModelSelectionError("Requested model is unavailable to the Codex account")
         selected = matches[0]
         source = "requested"
-    supported = [
-        value.get("reasoningEffort") for value in selected.get("supportedReasoningEfforts", [])
-        if isinstance(value, dict) and isinstance(value.get("reasoningEffort"), str)
-    ] if isinstance(selected.get("supportedReasoningEfforts", []), list) else []
-    default_effort = selected.get("defaultReasoningEffort") if isinstance(selected.get("defaultReasoningEffort"), str) else None
+    if required_prefix is not None:
+        model_id = selected.get("id")
+        model = selected.get("model")
+        if (not isinstance(model_id, str) or not model_id.startswith(required_prefix)
+                or model != model_id):
+            raise ModelSelectionError("Native Codex did not expose an exact Web model identity")
+    raw_supported = selected.get("supportedReasoningEfforts", selected.get("supported_reasoning_efforts", []))
+    if isinstance(raw_supported, list):
+        supported = [
+            value if isinstance(value, str) else value.get("reasoningEffort")
+            for value in raw_supported
+            if isinstance(value, str) or isinstance(value, dict)
+        ]
+        supported = [value for value in supported if isinstance(value, str)]
+    else:
+        supported = []
+    default_effort = selected.get("defaultReasoningEffort", selected.get("default_reasoning_effort"))
+    if not isinstance(default_effort, str):
+        default_effort = None
     effort = reasoning_effort or default_effort
     if effort is None and len(supported) == 1:
         effort = supported[0]
@@ -258,7 +272,8 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
     return {
         "id": selected["id"],
         "model": selected["model"],
-        "display_name": selected.get("displayName") if isinstance(selected.get("displayName"), str) else selected["id"],
+        "display_name": selected.get("displayName", selected.get("display_name"))
+        if isinstance(selected.get("displayName", selected.get("display_name")), str) else selected["id"],
         "source": source,
         "default_reasoning_effort": default_effort,
         "supported_reasoning_efforts": supported,
@@ -280,10 +295,14 @@ def list_models(config, required_prefix=None, *, native_isolated=False):
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
-            items = [
-                item for item in items
-                if isinstance(item.get("id"), str) and item["id"].startswith(required_prefix)
-            ]
+            filtered = []
+            for item in items:
+                model_id = item.get("id")
+                if isinstance(model_id, str) and model_id.startswith(required_prefix):
+                    if item.get("model") != model_id:
+                        raise ModelSelectionError("Native Codex Web model ID and execution model differ")
+                    filtered.append(item)
+            items = filtered
         return {
             "backend": "codex_app_server",
             "catalog_source": "model/list",
@@ -373,7 +392,7 @@ def run_task(config, store, job, stop=None):
                 if (not isinstance(snapshot, dict)
                         or not isinstance(snapshot.get("id"), str)
                         or not snapshot["id"].startswith("chatgpt-web/")
-                        or not isinstance(snapshot.get("model"), str)):
+                        or snapshot.get("model") != snapshot["id"]):
                     raise ModelSelectionError("Web task has no validated Native Codex model selection")
                 selected_model = dict(snapshot)
         else:
@@ -411,7 +430,8 @@ def run_task(config, store, job, stop=None):
             phase = "native_model_catalog"
             runtime_model = _select_model(
                 _model_catalog(app),
-                selected_model["model"],
+                selected_model["id"],
+                required_prefix="chatgpt-web/",
                 reasoning_effort=selected_model.get("reasoning_effort"),
             )
             if runtime_model["model"] != selected_model["model"]:

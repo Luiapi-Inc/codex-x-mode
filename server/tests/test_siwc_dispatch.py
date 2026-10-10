@@ -18,24 +18,24 @@ NATIVE_CATALOG = {
     "model_entitlement_verified": False,
     "models": [
         {
-            "id": "gpt-5.5",
-            "model": "gpt-5.5",
+            "id": "chatgpt-web/gpt-5.5",
+            "model": "chatgpt-web/gpt-5.5",
             "display_name": "GPT-5.5",
             "is_default": False,
             "default_reasoning_effort": "medium",
             "supported_reasoning_efforts": ["medium", "high"],
         },
         {
-            "id": "gpt-5.6-luna",
-            "model": "gpt-5.6-luna",
+            "id": "chatgpt-web/gpt-5.6-luna",
+            "model": "chatgpt-web/gpt-5.6-luna",
             "display_name": "GPT-5.6 Luna",
             "is_default": False,
             "default_reasoning_effort": "low",
             "supported_reasoning_efforts": ["low"],
         },
         {
-            "id": "gpt-5.6-sol",
-            "model": "gpt-5.6-sol",
+            "id": "chatgpt-web/gpt-5.6-sol",
+            "model": "chatgpt-web/gpt-5.6-sol",
             "display_name": "GPT-5.6 Sol",
             "is_default": True,
             "default_reasoning_effort": "high",
@@ -70,7 +70,7 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
             "projects": {"demo": {"cwd": str(project.resolve()), "allow_write": True}},
             "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
             "native_codex_home": str(native_home),
-            "chatgpt_web_default_model": "chatgpt-web/5.6-sol",
+            "chatgpt_web_default_model": "chatgpt-web/gpt-5.6-sol",
             "task_timeout_seconds": 3,
         }
         self.native_catalog = patch.object(service, "codex_list_models", return_value=NATIVE_CATALOG)
@@ -92,13 +92,13 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         return value
 
     def test_web_acceptance_uses_native_codex_backend_without_siwc_registration(self):
-        job = create_task(self.config, self.store, self.body(model_version="chatgpt-web/5.6-sol"))
+        job = create_task(self.config, self.store, self.body(model_version="chatgpt-web/gpt-5.6-sol"))
         payload = self.store.get(job["id"])["payload"]
         self.assertEqual(payload["execution_backend"], "codex_app_server")
         self.assertEqual(payload["dispatch_origin"], "web")
         self.assertNotIn("siwc_registration", payload)
-        self.assertEqual(payload["selected_model"]["id"], "chatgpt-web/5.6-sol")
-        self.assertEqual(payload["selected_model"]["model"], "gpt-5.6-sol")
+        self.assertEqual(payload["selected_model"]["id"], "chatgpt-web/gpt-5.6-sol")
+        self.assertEqual(payload["selected_model"]["model"], "chatgpt-web/gpt-5.6-sol")
         self.assertEqual(payload["selected_model"]["catalog_source"], "model/list")
 
     def test_new_web_path_never_calls_siwc_inference(self):
@@ -112,10 +112,10 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         self.assertEqual(result["state"], "completed")
         self.assertTrue(result["result"]["model_selection"]["native_codex_owns_inference"])
 
-    def test_web_family_alias_uses_configured_default_or_native_catalog_fallback(self):
+    def test_web_family_alias_uses_configured_default_or_native_account_default(self):
         job = create_task(self.config, self.store, self.body(model_version="chatgpt-web"))
         payload = self.store.get(job["id"])["payload"]
-        self.assertEqual(payload["selected_model"]["id"], "chatgpt-web/5.6-sol")
+        self.assertEqual(payload["selected_model"]["id"], "chatgpt-web/gpt-5.6-sol")
         self.assertEqual(payload["selected_model"]["source"], "configured_default")
 
         other = dict(self.config, chatgpt_web_default_model=None)
@@ -123,22 +123,26 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
             request_key="missing-default", model_version="chatgpt-web"
         ))
         fallback_payload = self.store.get(fallback["id"])["payload"]
-        self.assertEqual(fallback_payload["selected_model"]["id"], "chatgpt-web/5.6-sol")
-        self.assertEqual(fallback_payload["selected_model"]["source"], "native_catalog_fallback")
+        self.assertEqual(fallback_payload["selected_model"]["id"], "chatgpt-web/gpt-5.6-sol")
+        self.assertEqual(fallback_payload["selected_model"]["source"], "account_default")
 
-    def test_free_like_native_catalog_resolves_family_to_luna(self):
+    def test_native_catalog_default_resolves_family_to_luna(self):
         free_catalog = dict(NATIVE_CATALOG)
-        free_catalog["models"] = [item for item in NATIVE_CATALOG["models"] if item["id"] == "gpt-5.6-luna"]
+        free_catalog["models"] = [
+            {**item, "is_default": True}
+            for item in NATIVE_CATALOG["models"]
+            if item["id"] == "chatgpt-web/gpt-5.6-luna"
+        ]
         self.native_catalog_mock.return_value = free_catalog
         job = create_task(self.config, self.store, self.body(
             request_key="free-luna", model_version="chatgpt-web"
         ))
         payload = self.store.get(job["id"])["payload"]
-        self.assertEqual(payload["selected_model"]["id"], "chatgpt-web/5.6-luna")
-        self.assertEqual(payload["selected_model"]["model"], "gpt-5.6-luna")
-        self.assertEqual(payload["selected_model"]["source"], "native_catalog_fallback")
+        self.assertEqual(payload["selected_model"]["id"], "chatgpt-web/gpt-5.6-luna")
+        self.assertEqual(payload["selected_model"]["model"], "chatgpt-web/gpt-5.6-luna")
+        self.assertEqual(payload["selected_model"]["source"], "account_default")
 
-    def test_web_rejects_non_alias_and_unlisted_model_before_queueing(self):
+    def test_web_rejects_non_native_and_unlisted_model_before_queueing(self):
         with self.assertRaises(Fault) as caught:
             create_task(self.config, self.store, self.body(model_version="gpt-5.6-sol"))
         self.assertEqual(caught.exception.status, 400)
@@ -151,6 +155,13 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
             create_task(self.config, self.store, self.body(
                 model_version="chatgpt-web/6-astra", request_key="blocked-upstream-model"
             ))
+        self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+
+    def test_unsupported_web_effort_fails_before_queueing(self):
+        invalid = dict(self.config, chatgpt_web_reasoning_effort="max")
+        with self.assertRaises(Fault) as caught:
+            create_task(invalid, self.store, self.body(model_version="chatgpt-web/gpt-5.6-sol"))
         self.assertEqual(caught.exception.status, 400)
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
 
@@ -174,43 +185,37 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         self.assertEqual(self.native_catalog_mock.call_count, 1)
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 1)
 
-    def test_mcp_web_origin_exposes_only_packaged_aliases_on_native_backend(self):
+    def test_mcp_web_origin_exposes_only_exact_native_models(self):
         catalog = _call_tool("codex_x_list_models", {}, self.config, self.store)
         self.assertEqual(catalog["backend"], "codex_app_server")
         self.assertEqual(catalog["catalog_source"], "model/list")
         self.assertTrue(catalog["native_codex_owns_inference"])
         self.assertEqual(catalog["route_prefix"], "chatgpt-web/")
-        aliases = {item["id"] for item in catalog["models"]}
-        self.assertEqual(aliases, {"chatgpt-web/5.5", "chatgpt-web/5.6-luna", "chatgpt-web/5.6-sol"})
-        self.assertNotIn("chatgpt-web/6-astra", catalog["supported_models"])
+        model_ids = {item["id"] for item in catalog["models"]}
+        self.assertEqual(model_ids, {
+            "chatgpt-web/gpt-5.5", "chatgpt-web/gpt-5.6-luna", "chatgpt-web/gpt-5.6-sol",
+        })
+        self.assertTrue(all(item["id"] == item["model"] for item in catalog["models"]))
+        self.assertNotIn("gpt-6-astra", catalog["supported_models"])
         job = _call_tool("codex_x_create_task", self.body(), self.config, self.store)
         payload = self.store.get(job["id"])["payload"]
         self.assertEqual(payload["execution_backend"], "codex_app_server")
         self.assertNotIn("siwc_registration", payload)
 
-    def test_future_package_registry_can_add_pro_without_core_routing_change(self):
-        registry = Path(self.tmp.name) / "web_models.next.json"
-        registry.write_text('''{
-          "schema_version": 1,
-          "models": [
-            {"id": "chatgpt-web/5.5", "slug": "gpt-5.5"},
-            {"id": "chatgpt-web/5.6-sol", "slug": "gpt-5.6-sol"},
-            {"id": "chatgpt-web/pro", "slug": "gpt-pro-fixture", "priority": 100}
-          ]
-        }''')
-        next_catalog = dict(NATIVE_CATALOG)
-        next_catalog["models"] = list(NATIVE_CATALOG["models"]) + [{
-            "id": "gpt-pro-fixture",
+    def test_native_web_id_with_non_web_execution_model_fails_closed(self):
+        invalid_catalog = dict(NATIVE_CATALOG)
+        invalid_catalog["models"] = list(NATIVE_CATALOG["models"]) + [{
+            "id": "chatgpt-web/gpt-pro-fixture",
             "model": "gpt-pro-fixture",
-            "display_name": "GPT Pro Fixture",
+            "display_name": "Mismatched Fixture",
             "is_default": False,
             "default_reasoning_effort": "high",
             "supported_reasoning_efforts": ["high"],
         }]
-        self.native_catalog_mock.return_value = next_catalog
-        with patch.object(service, "WEB_MODEL_REGISTRY_PATH", registry):
-            catalog = _call_tool("codex_x_list_models", {}, self.config, self.store)
-        self.assertIn("chatgpt-web/pro", [item["id"] for item in catalog["models"]])
+        self.native_catalog_mock.return_value = invalid_catalog
+        with self.assertRaises(Fault) as caught:
+            service.list_models(self.config)
+        self.assertEqual(caught.exception.status, 503)
 
     def test_followup_preserves_alias_and_blocks_origin_switch(self):
         parent = create_task(self.config, self.store, self.body())
@@ -218,8 +223,8 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         body = {"prompt": "Continue", "request_key": "fixture-followup"}
         child = continue_task(self.config, self.store, parent["id"], body)
         payload = self.store.get(child["id"])["payload"]
-        self.assertEqual(payload["model_version"], "chatgpt-web/5.6-sol")
-        self.assertEqual(payload["selected_model"]["model"], "gpt-5.6-sol")
+        self.assertEqual(payload["model_version"], "chatgpt-web/gpt-5.6-sol")
+        self.assertEqual(payload["selected_model"]["model"], "chatgpt-web/gpt-5.6-sol")
         self.assertEqual(payload["execution_backend"], "codex_app_server")
         with self.assertRaises(Fault):
             continue_task(dict(self.config, _dispatch_origin="local"), self.store, parent["id"],
@@ -234,10 +239,10 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         self.assertEqual(selection["backend"], "codex_app_server")
         self.assertEqual(selection["dispatch_origin"], "web")
         self.assertEqual(selection["catalog_source"], "model/list")
-        self.assertEqual(selection["id"], "chatgpt-web/5.6-sol")
-        self.assertEqual(selection["model"], "gpt-5.6-sol")
+        self.assertEqual(selection["id"], "chatgpt-web/gpt-5.6-sol")
+        self.assertEqual(selection["model"], "chatgpt-web/gpt-5.6-sol")
         self.assertEqual(selection["reasoning_effort"], "high")
-        self.assertEqual(selection["observed_model"], "gpt-5.6-sol")
+        self.assertEqual(selection["observed_model"], "chatgpt-web/gpt-5.6-sol")
         self.assertEqual(selection["reroutes"], [])
         self.assertTrue(selection["model_identity_verified"])
         self.assertTrue(selection["inference_verified"])
@@ -256,7 +261,7 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
                     return {}
                 if method == "model/list":
                     return {"data": [{
-                        "id": "gpt-5.6-sol", "model": "gpt-5.6-sol", "isDefault": False,
+                        "id": "chatgpt-web/gpt-5.6-sol", "model": "chatgpt-web/gpt-5.6-sol", "isDefault": True,
                         "defaultReasoningEffort": "high",
                         "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
                     }], "nextCursor": None}
@@ -304,7 +309,7 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
                     return {}
                 if method == "model/list":
                     return {"data": [{
-                        "id": "gpt-5.6-sol", "model": "gpt-5.6-sol", "isDefault": False,
+                        "id": "chatgpt-web/gpt-5.6-sol", "model": "chatgpt-web/gpt-5.6-sol", "isDefault": True,
                         "defaultReasoningEffort": "high",
                         "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
                     }], "nextCursor": None}
