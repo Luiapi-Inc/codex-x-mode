@@ -51,3 +51,7 @@ G4 pins the built-in Serena context `chatgpt`. The real upstream catalog contain
 With Serena `context=chatgpt` enabled, the unified MCP Gateway additionally exposes `codex_x_serena_preview_replace_in_files` as a **read-only**, bounded, literal multi-file preview. It forces native Serena `dry_run=true` inside an ephemeral source mirror; there is **no** direct multi-file apply privilege through this wrapper. Serena children use disposable HOME/XDG directories and scoped CWD instead of operator credential storage.
 
 Authenticated loopback Serena MCP passed local integration, but **not** ChatGPT Web/Mobile remote E2E. Five high-risk upstream tool names remain intentionally unavailable to remote MCP regardless of allowlist. See [RC5 Serena connector security evidence](docs/v1/G4_RC5_CONNECTOR_SECURITY_EVIDENCE.md).
+
+## v1.0 RC6 — Native Full Shell (operator-only)
+
+A real PTY supports interactive shell sessions, input/output, binary-safe output, resize, signals and session lifecycle. Enable via private shell.enabled=true and an explicit local --shell-port listener; a distinct shell_key is required. The public /mode/mcp endpoint does not expose shell tools. A full OS-user shell is NOT a filesystem sandbox, and remote SSH transport requires separate acceptance. See docs/v1/G5_RC6_FULL_SHELL_EVIDENCE.md.

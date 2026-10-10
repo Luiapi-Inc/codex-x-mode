@@ -16,10 +16,10 @@ class VersionConsistencyTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         manifest = json.loads((root / "plugin.json").read_text())
         version = manifest["version"]
-        self.assertEqual(version, "1.0.0-rc.5")
+        self.assertEqual(version, "1.0.0-rc.6")
         self.assertEqual(json.loads((root / ".codex-plugin/plugin.json").read_text())["version"], version)
-        # PEP 440 requires `1.0.0rc5` whereas plugin SemVer uses `1.0.0-rc.5`.
-        self.assertEqual(tomllib.loads((root / "server/pyproject.toml").read_text())["project"]["version"], "1.0.0rc5")
+        # PEP 440 requires `1.0.0rc6` whereas plugin SemVer uses `1.0.0-rc.6`.
+        self.assertEqual(tomllib.loads((root / "server/pyproject.toml").read_text())["project"]["version"], "1.0.0rc6")
         self.assertEqual(SERVER_INFO["version"], version)
         generated_schema = schema("https://bridge.example.invalid")
         self.assertEqual(generated_schema["info"]["version"], version)

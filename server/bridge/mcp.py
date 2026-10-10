@@ -27,7 +27,7 @@ from .service import (
 )
 
 
-SERVER_INFO = {"name": "codex-x-mode", "version": "1.0.0-rc.5"}
+SERVER_INFO = {"name": "codex-x-mode", "version": "1.0.0-rc.6"}
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 SUPPORTED_VERSIONS = (MODERN_VERSION, *LEGACY_VERSIONS)

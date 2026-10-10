@@ -36,6 +36,7 @@ def main():
     serve = commands.add_parser("serve")
     serve.add_argument("--port", type=int, default=8240)
     serve.add_argument("--admin-port", type=int, help="Opt-in local-only Admin API; requires admin_key")
+    serve.add_argument("--shell-port", type=int, help="Opt-in operator-only PTY MCP on loopback; requires shell_key and shell.enabled")
     commands.add_parser("mcp-stdio")
     commands.add_parser("native-protocol-check", help="Inspect installed Native schema; never runs inference")
     commands.add_parser("codex-x-app-mcp-stdio")
@@ -51,7 +52,7 @@ def main():
     apply.add_argument("--expected-revision", required=True)
     apply.add_argument("--confirm", action="store_true", help="Explicitly authorize offline config mutation")
     key = commands.add_parser("show-key")
-    key.add_argument("role", choices=["gpt", "provider", "mcp"])
+    key.add_argument("role", choices=["gpt", "provider", "mcp", "shell"])
     codex = commands.add_parser("codex")
     codex.add_argument("--port", type=int, default=8240)
     codex.add_argument("args", nargs=argparse.REMAINDER)
@@ -76,6 +77,7 @@ def main():
             parser.error("cwd must be an existing project directory")
         config = {"gpt_key": secrets.token_urlsafe(32), "provider_key": secrets.token_urlsafe(32),
                   "mcp_key": secrets.token_urlsafe(32), "admin_key": secrets.token_urlsafe(32),
+                  "shell_key": secrets.token_urlsafe(32),
                   "projects": {args.project: {"cwd": str(cwd), "allow_write": args.allow_write}},
                   "codex_command": ["codex"], "backend_timeout_seconds": 600, "task_timeout_seconds": 600,
                   "config_schema_version": 1,
@@ -83,6 +85,7 @@ def main():
                   "web_model_policy": "native",
                   "serena": {"enabled": False, "context": "chatgpt",
                              "allow_mutations": False, "timeout_seconds": 45},
+                  "shell": {"enabled": False, "executable": "/bin/sh"},
                   }
         if args.model_version is not None:
             config["chatgpt_web_default_model"] = args.model_version
@@ -181,6 +184,8 @@ def main():
     server = Server(("127.0.0.1", args.port), config, store)
     admin = None
     admin_thread = None
+    shell_server = None
+    shell_thread = None
     try:
         if args.admin_port is not None:
             if not 1 <= args.admin_port <= 65535 or args.admin_port == server.server_port:
@@ -191,12 +196,32 @@ def main():
             admin_thread = threading.Thread(target=admin.serve_forever, daemon=True)
             admin_thread.start()
             print(f"Local-only Admin API on 127.0.0.1:{admin.server_port}; remote ingress disabled.")
+        if args.shell_port is not None:
+            reserved_ports = {server.server_port}
+            if admin is not None:
+                reserved_ports.add(admin.server_port)
+            if not 1 <= args.shell_port <= 65535 or args.shell_port in reserved_ports:
+                parser.error("Operator shell port must be distinct and within 1..65535")
+            if config.get("shell", {}).get("enabled") is not True:
+                parser.error("Operator shell must be enabled in private config")
+            from .shell_operator import OperatorShellServer
+            shell_server = OperatorShellServer(
+                ("127.0.0.1", args.shell_port), config, store,
+            )
+            shell_thread = threading.Thread(target=shell_server.serve_forever, daemon=True)
+            shell_thread.start()
+            print(f"Operator-only full PTY MCP listening on 127.0.0.1:{shell_server.server_port}; no tunnel route.")
         print(f"Bridge listening on loopback port {server.server_port}. HTTPS is required for remote MCP.")
         try:
             server.serve_forever()
         except KeyboardInterrupt:
             pass
     finally:
+        if shell_server is not None:
+            if shell_thread is not None:
+                shell_server.shutdown()
+                shell_thread.join(timeout=10)
+            shell_server.server_close()
         if admin is not None:
             if admin_thread is not None:
                 admin.shutdown()

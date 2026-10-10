@@ -24,7 +24,7 @@ class ConfigFault(Exception):
         self.status = status
 
 
-_MUTABLE = frozenset({"mcp_policy", "allowed_origins", "projects", "web_model_policy", "serena"})
+_MUTABLE = frozenset({"mcp_policy", "allowed_origins", "projects", "web_model_policy", "serena", "shell"})
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -81,6 +81,14 @@ class ConfigKernel:
 
     @staticmethod
     def _validate(next_config):
+        if "shell" in next_config:
+            shell = next_config["shell"]
+            if (not isinstance(shell, dict)
+                or set(shell) - {"enabled", "executable"}
+                or type(shell.get("enabled")) is not bool
+                or not isinstance(shell.get("executable", "/bin/sh"), str)
+                or not shell.get("executable", "/bin/sh").startswith("/")):
+                raise ConfigFault(400, "Invalid operator shell config")
         if "serena" in next_config:
             from .serena_adapter import _settings
             from .core import Fault
