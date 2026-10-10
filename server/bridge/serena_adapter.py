@@ -75,6 +75,27 @@ TOOLS = [{
 } for item in CATALOG_MAP.values()]
 MAP = {tool["name"]: tool["name"][len(PREFIX):] for tool in TOOLS}
 
+PREVIEW_NAME = "codex_x_serena_preview_replace_in_files"
+PREVIEW_TOOL = {
+    "name": PREVIEW_NAME,
+    "description": (
+        "Preview a bounded literal multi-file replacement through Serena context chatgpt "
+        "in a private source mirror; always dry-run and never modifies the original project."
+    ),
+    "inputSchema": {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "project_id": {"type": "string"},
+            "relative_path": {"type": "string"},
+            "needle": {"type": "string"},
+            "repl": {"type": "string"},
+            "mode": {"type": "string", "enum": ["literal"]},
+        },
+        "required": ["project_id", "relative_path", "needle", "repl", "mode"],
+    },
+    "annotations": {"readOnlyHint": True, "destructiveHint": False},
+}
+
 
 def _settings(config):
     value = config.get("serena", {})
@@ -238,11 +259,26 @@ def _rpc_process(command, root, name, arguments, timeout):
             "--transport", "stdio", "--enable-web-dashboard", "False",
             "--enable-gui-log-window", "False", "--open-web-dashboard", "False",
             "--log-level", "ERROR"]
+    # An environment allowlist does not protect operator credentials if HOME
+    # remains the real user's directory. Serena/LSP children get a disposable
+    # home and XDG roots, independent of private Codex/OpenAI auth on disk.
+    private_home = tempfile.TemporaryDirectory(prefix="codex-serena-child-home-")
+    env = _private_env()
+    env["HOME"] = private_home.name
+    for key, suffix in (
+        ("XDG_CONFIG_HOME", "config"),
+        ("XDG_CACHE_HOME", "cache"),
+        ("XDG_DATA_HOME", "data"),
+    ):
+        folder = Path(private_home.name) / suffix
+        folder.mkdir(mode=0o700)
+        env[key] = str(folder)
     try:
         proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, start_new_session=True,
-                                env=_private_env(), bufsize=0)
+                                cwd=str(root), env=env, bufsize=0)
     except OSError as exc:
+        private_home.cleanup()
         raise Fault(503, "Serena provider unavailable") from exc
     buffer = bytearray()
     deadline = time.monotonic() + timeout
@@ -321,6 +357,7 @@ def _rpc_process(command, root, name, arguments, timeout):
             raise Fault(503, "Serena process group did not terminate") from exc
         if proc.stdin:proc.stdin.close()
         if proc.stdout:proc.stdout.close()
+        private_home.cleanup()
 
 
 def _project_fingerprint(root):
@@ -482,6 +519,64 @@ def _run_write(config, store, project_id, name, arguments):
             "provider": "serena", "tool": name, "thread_id": thread, "turn_id": turn,
         })
         raise
+
+
+def preview_replace_in_files(config, project_id, arguments):
+    """Request Serena's native dry-run exclusively against an ephemeral mirror.
+
+    Even a misbehaving Serena implementation that ignores dry_run cannot mutate
+    the original project, since it receives only the private snapshot path.
+    """
+    if not enabled(config):
+        raise Fault(403, "Serena disabled")
+    if not isinstance(arguments, dict) or set(arguments) != {
+        "relative_path", "needle", "repl", "mode"
+    }:
+        raise Fault(400, "Unexpected Serena multi-file preview arguments")
+    if arguments["mode"] != "literal":
+        raise Fault(400, "Serena multi-file preview currently supports only literal mode")
+    needle = text(arguments["needle"], "needle", 1000)
+    repl = arguments["repl"]
+    if not isinstance(repl, str) or len(repl) > 10000:
+        raise Fault(400, "Invalid Serena preview replacement")
+    path = arguments["relative_path"]
+    if not isinstance(path, str) or not path.strip():
+        raise Fault(400, "Invalid Serena preview path")
+    _safe_relative_path(path)
+    # The target may be an individual file or directory, but it must be
+    # contained in an explicitly allowed project without following symlinks.
+    try:
+        _scoped_file(config, project_id, path)
+    except Fault as exc:
+        if exc.status != 400:
+            raise
+        _scoped_file(config, project_id, path, directory=True)
+    settings = _settings(config)
+    root = Path(project_config(config, project_id, "read-only")["cwd"])
+    with tempfile.TemporaryDirectory(prefix="codex-serena-multifile-preview-") as staging:
+        mirror = _mirror_project_for_read(root, staging)
+        response = _rpc_process(
+            settings.get("command", ["serena", "start-mcp-server"]),
+            mirror, "replace_in_files", {
+                "relative_path": path, "needle": needle, "repl": repl,
+                "mode": "literal", "dry_run": True, "max_answer_chars": 65536,
+            }, settings.get("timeout_seconds", 45),
+        )
+    content = response.get("content") or []
+    if not isinstance(content, list):
+        raise Fault(503, "Invalid Serena dry-run response")
+    parts = [item["text"] for item in content
+             if isinstance(item, dict) and item.get("type") == "text"
+             and isinstance(item.get("text"), str)]
+    text_value = "\n".join(parts)
+    if len(text_value.encode("utf-8")) > 65536:
+        raise Fault(413, "Serena multi-file preview output too large")
+    return {
+        "provider": "serena", "context": "chatgpt",
+        "project_id": project_id, "tool": "replace_in_files",
+        "dry_run": True, "applied": False, "read_only": True,
+        "preview_text": text_value,
+    }
 
 
 def call_tool(config, project_id, name, arguments, store=None):

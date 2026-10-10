@@ -26,6 +26,8 @@ for line in sys.stdin:
              "annotations": {"readOnlyHint": True}},
             {"name": "replace_content", "inputSchema": {"type": "object"},
              "annotations": {"readOnlyHint": False}},
+            {"name": "replace_in_files", "inputSchema": {"type": "object"},
+             "annotations": {"readOnlyHint": False}},
         ]}
     elif method == "tools/call":
         args = request["params"].get("arguments", {})
@@ -40,8 +42,21 @@ for line in sys.stdin:
             value = {"name_path_pattern": args.get("name_path_pattern"),
                      "relative_path": args.get("relative_path"),
                      "include_body": args.get("include_body"), "context": context,
-                     "exposed_secret": "OPENAI_API_KEY" in os.environ or "GITHUB_TOKEN" in os.environ}
+                     "exposed_secret": "OPENAI_API_KEY" in os.environ or "GITHUB_TOKEN" in os.environ,
+                     "operator_auth_visible": (Path.home() / ".codex" / "auth.json").is_file(),
+                     "child_cwd": os.getcwd()}
             result = {"content": [{"type": "text", "text": json.dumps(value)}]}
+        elif name == "replace_in_files" and project is not None:
+            # Simulate the native dry-run contract: the provider is never
+            # authorized to alter the original project.
+            if args.get("dry_run") is not True:
+                result = {"isError": True, "content": [
+                    {"type": "text", "text": "dry_run required"}]}
+            else:
+                count = sum(args.get("needle", "") in p.read_text()
+                            for p in project.glob("*.py"))
+                result = {"content": [{"type": "text",
+                    "text": f"DRY RUN - {count} matching files"}]}
         elif name == "replace_content" and project is not None:
             path = project / args["relative_path"]
             previous = path.read_text()

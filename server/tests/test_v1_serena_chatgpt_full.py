@@ -74,6 +74,21 @@ class FullSerenaChatGPTTests(unittest.TestCase):
         self.assertFalse((self.project / ".serena").exists())
         self.assertEqual((self.project / "file.py").read_text(), "value = 1\n")
 
+    def test_serena_child_uses_disposable_home_not_operator_auth(self):
+        private_home = self.root / "operator-home"
+        secrets_dir = private_home / ".codex"
+        secrets_dir.mkdir(parents=True)
+        (secrets_dir / "auth.json").write_text('{"private":"not-for-serena"}')
+        with patch.dict("os.environ", {"HOME": str(private_home)}):
+            result = call_tool(self.conf, "demo", "find_symbol", {
+                "name_path_pattern": "value", "relative_path": "file.py",
+            })
+        info = json.loads(result["symbols_text"])
+        self.assertFalse(info["operator_auth_visible"])
+        self.assertNotEqual(Path(info["child_cwd"]), Path.cwd())
+        self.assertNotEqual(Path(info["child_cwd"]), self.project)
+        self.assertTrue((secrets_dir / "auth.json").exists())
+
     def test_explicit_scoped_serena_edit_has_cas_idempotency_and_evidence(self):
         self.conf["mcp_policy"] = {"mode": "explicit", "allowed_tools": [
             "codex_x_serena_replace_content"]}

@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 from .core import Fault, encoded
 from .policy import permitted_tool_names
-from .serena_adapter import TOOLS as SERENA_TOOLS, MAP as SERENA_MAP, enabled as serena_enabled, call_tool as call_serena_tool
+from .serena_adapter import (
+    TOOLS as SERENA_TOOLS, MAP as SERENA_MAP, PREVIEW_TOOL as SERENA_PREVIEW_TOOL,
+    PREVIEW_NAME as SERENA_PREVIEW_NAME, preview_replace_in_files,
+    enabled as serena_enabled, call_tool as call_serena_tool,
+)
 from .codex_x_app import SERVER_INFO as CODEX_X_APP_SERVER_INFO, TOOLS as CODEX_X_APP_TOOLS, call_tool as call_codex_x_app_tool
 from .service import (
     cancel_backend,
@@ -23,7 +27,7 @@ from .service import (
 )
 
 
-SERVER_INFO = {"name": "codex-x-mode", "version": "1.0.0-rc.4"}
+SERVER_INFO = {"name": "codex-x-mode", "version": "1.0.0-rc.5"}
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 SUPPORTED_VERSIONS = (MODERN_VERSION, *LEGACY_VERSIONS)
@@ -233,10 +237,17 @@ def _tool_result(value, is_error=False, surface="codex_x"):
 
 
 def _call_tool(name, args, config, store):
-    if name not in TOOL_MAP and name not in SERENA_MAP:
+    if name not in TOOL_MAP and name not in SERENA_MAP and name != SERENA_PREVIEW_NAME:
         raise Fault(404, "Unknown tool")
     if not isinstance(args, dict):
         raise Fault(400, "Tool arguments must be an object")
+    if name == SERENA_PREVIEW_NAME:
+        if not isinstance(args, dict):
+            raise Fault(400, "Tool arguments must be an object")
+        return preview_replace_in_files(
+            config, args.get("project_id"),
+            {k: v for k, v in args.items() if k != "project_id"},
+        )
     if name in SERENA_MAP:
         return call_serena_tool(config, args.get("project_id"), SERENA_MAP[name],
                                 {k: v for k, v in args.items() if k != "project_id"}, store=store)
@@ -281,7 +292,7 @@ def _call_tool(name, args, config, store):
 
 
 def _call_unified_tool(name, args, config, store):
-    if name in TOOL_MAP or name in SERENA_MAP:
+    if name in TOOL_MAP or name in SERENA_MAP or name == SERENA_PREVIEW_NAME:
         return _call_tool(name, args, config, store)
     original = UNIFIED_APP_TOOL_MAP.get(name)
     if original is None:
@@ -343,13 +354,16 @@ def handle_rpc(request, config, store, legacy_state=None, surface="codex_x"):
         exposed = SAFE_READ | (SUPPORTED_WRITE if writable else frozenset())
         tools.extend(tool for tool in SERENA_TOOLS
                      if tool["name"].removeprefix("codex_x_serena_") in exposed)
+        tools.append(SERENA_PREVIEW_TOOL)
     resources = [] if surface == "codex_x_app" else RESOURCES
     prompts = [] if surface == "codex_x_app" else PROMPTS
 
     # Discoverability is not mutation permission. Resolve policy separately
     # for every RPC invocation to prevent stale tools/list from granting calls.
     try:
-        allowed = permitted_tool_names(config, tools, catalog=(*UNIFIED_TOOLS, *CODEX_X_APP_TOOLS, *SERENA_TOOLS))
+        allowed = permitted_tool_names(config, tools, catalog=(
+            *UNIFIED_TOOLS, *CODEX_X_APP_TOOLS, *SERENA_TOOLS, SERENA_PREVIEW_TOOL,
+        ))
     except Fault as exc:
         raise RpcError(-32003, str(exc)) from exc
 

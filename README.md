@@ -45,3 +45,9 @@ The v1 RC3 bridge records the Native turn's terminal execution outcome separatel
 ## v1.0 RC4 — Serena ChatGPT context (development only)
 
 G4 pins the built-in Serena context `chatgpt`. The real upstream catalog contains 29 tools; 13 read-only and 11 guarded edit/memory operations have gateway contracts. Five higher-risk operations remain blocked. New setups default to `serena.context=chatgpt`, `serena.enabled=false`, `serena.allow_mutations=false`. Read-only Serena uses a temporary project mirror so language-server cache cannot alter source. See [G4 RC4 evidence](docs/v1/G4_RC4_SERENA_CHATGPT_INTEGRATION.md).
+
+## v1.0 RC5 — Safe Serena multi-file preview (development only)
+
+With Serena `context=chatgpt` enabled, the unified MCP Gateway additionally exposes `codex_x_serena_preview_replace_in_files` as a **read-only**, bounded, literal multi-file preview. It forces native Serena `dry_run=true` inside an ephemeral source mirror; there is **no** direct multi-file apply privilege through this wrapper. Serena children use disposable HOME/XDG directories and scoped CWD instead of operator credential storage.
+
+Authenticated loopback Serena MCP passed local integration, but **not** ChatGPT Web/Mobile remote E2E. Five high-risk upstream tool names remain intentionally unavailable to remote MCP regardless of allowlist. See [RC5 Serena connector security evidence](docs/v1/G4_RC5_CONNECTOR_SECURITY_EVIDENCE.md).

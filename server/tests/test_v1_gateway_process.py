@@ -76,6 +76,57 @@ class UnifiedGatewayProcessTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(response["result"]["structuredContent"]["threads"], [])
 
+    def test_authenticated_serena_preview_one_mcp_transport(self):
+        project = Path(self.tmp.name) / "serena-project"
+        project.mkdir()
+        (project / "one.py").write_text("value = old\n")
+        (project / "two.py").write_text("value = old\n")
+        original = {file.name: file.read_bytes() for file in project.iterdir()}
+        self.config["projects"] = {
+            "demo": {"cwd": str(project.resolve()), "allow_write": False}
+        }
+        self.config["serena"] = {
+            "context": "chatgpt", "enabled": True, "allow_mutations": False,
+            "timeout_seconds": 5,
+            "command": [sys.executable,
+                        str(Path(__file__).with_name("fake_serena_mcp.py"))],
+        }
+        # HTTP server snapshots startup config to protect live policy.
+        # Set only the ephemeral test server's config, never production state.
+        self.server.config.update({
+            "projects": self.config["projects"],
+            "serena": self.config["serena"],
+        })
+        unauth_status, _ = self.call("tools/list", bearer=False)
+        self.assertEqual(unauth_status, 401)
+        auth_status, listing = self.call("tools/list")
+        self.assertEqual(auth_status, 200)
+        names = [tool["name"] for tool in listing["result"]["tools"]]
+        self.assertIn("codex_x_serena_preview_replace_in_files", names)
+        self.assertIn("codex_x_serena_find_symbol", names)
+        self.assertNotIn("codex_x_serena_execute_shell_command", names)
+        self.assertNotIn("codex_x_serena_replace_in_files", names)
+        http_status, answer = self.call("tools/call", {
+            "name": "codex_x_serena_preview_replace_in_files",
+            "arguments": {
+                "project_id": "demo", "relative_path": ".",
+                "needle": "old", "repl": "new", "mode": "literal",
+            },
+        })
+        self.assertEqual(http_status, 200)
+        self.assertFalse(answer["result"].get("isError"), answer)
+        result = answer["result"]["structuredContent"]
+        self.assertTrue(result["dry_run"])
+        self.assertFalse(result["applied"])
+        self.assertEqual(result["context"], "chatgpt")
+        self.assertEqual(
+            {file.name: file.read_bytes() for file in project.iterdir()},
+            original,
+        )
+        self.assertEqual(
+            self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0,
+        )
+
     def test_mutation_and_anonymous_calls_have_no_privileged_side_effect(self):
         status, _ = self.call("tools/list", bearer=False)
         self.assertEqual(status, 401)
