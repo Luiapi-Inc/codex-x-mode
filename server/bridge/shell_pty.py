@@ -82,7 +82,7 @@ class ShellManager:
         return env
 
     def open(self, project_id, *, request_key, columns=80, rows=24,
-             _launch_argv=None, _launch_metadata=None):
+             _launch_argv=None, _launch_metadata=None, _on_registered=None):
         with self.lock:
             shell = self._settings()
             _token(request_key, "request_key")
@@ -161,6 +161,10 @@ class ShellManager:
                 "launch_metadata": _launch_metadata or {},
             }
             self.sessions[sid] = entry
+            if _on_registered is not None:
+                # Register owned credentials before the watcher can observe a
+                # fast-exiting SSH process. This private hook is not an RPC field.
+                _on_registered(sid)
             with self.store._immediate_transaction():
                 self.store.db.execute(
                     "UPDATE operator_shell_sessions SET state='running' WHERE id=?", (sid,),
@@ -252,18 +256,55 @@ class ShellManager:
 
     def status(self, sid):
         with self.lock:
-            value = self._entry(sid)
+            if sid in self.sessions:
+                value = self.sessions[sid]
+                return {
+                    "session_id": sid, "project_id": value["project_id"],
+                    "active": value["state"] == "running",
+                    "state": value["state"], "exit_code": value["exit_code"],
+                    "output_bytes": value["total"], "columns": value["columns"],
+                    "rows": value["rows"], "can_reattach": True,
+                    "reconciliation_required": value["state"] == "unknown",
+                }
+            # A process-restart can leave an authoritative claim in SQLite,
+            # but the new runtime does not own that PTY or its process group.
+            # Never turn persisted 'running' into evidence of live attachment,
+            # never release the resource claim based on PID/name guesswork.
+            if not isinstance(sid, str):
+                raise Fault(404, "Unknown operator shell")
+            with self.store.lock:
+                row = self.store.db.execute(
+                    "SELECT * FROM operator_shell_sessions WHERE id=?", (sid,),
+                ).fetchone()
+            if row is None:
+                raise Fault(404, "Unknown operator shell")
+            terminal = row["state"] in ("completed", "failed", "interrupted", "cancelled")
+            try:
+                receipt = json.loads(row["receipt"]) if row["receipt"] else {}
+            except (ValueError, TypeError):
+                receipt = {}
             return {
-                "session_id": sid, "project_id": value["project_id"],
-                "active": value["state"] == "running",
-                "state": value["state"], "exit_code": value["exit_code"],
-                "output_bytes": value["total"], "columns": value["columns"],
-                "rows": value["rows"],
+                "session_id": sid, "project_id": row["project_id"],
+                "active": False,
+                "state": row["state"] if terminal else "detached_unverified",
+                "stored_state": row["state"],
+                "exit_code": receipt.get("exit_code") if terminal else None,
+                "output_bytes": receipt.get("output_bytes", 0) if terminal else 0,
+                "columns": row["columns"], "rows": row["rows"],
+                "can_reattach": False,
+                "reconciliation_required": not terminal,
             }
 
     def list(self):
         with self.lock:
-            return {"sessions": [self.status(sid) for sid in self.sessions]}
+            active = [self.status(sid) for sid in self.sessions]
+            with self.store.lock:
+                rows = self.store.db.execute(
+                    "SELECT id FROM operator_shell_sessions ORDER BY created ASC"
+                ).fetchall()
+            detached = [self.status(row["id"]) for row in rows
+                        if row["id"] not in self.sessions]
+            return {"sessions": active, "detached_sessions": detached}
 
     def write(self, sid, data, *, request_key):
         with self.lock:

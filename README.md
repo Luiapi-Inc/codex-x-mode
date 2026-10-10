@@ -59,3 +59,7 @@ A real PTY supports interactive shell sessions, input/output, binary-safe output
 ## v1.0 RC7 — Managed SSH over Native PTY (development only)
 
 G5.1 introduces named-profile SSH sessions through the **local operator-only MCP listener**. Use pinned `known_hosts`, owner-only identity files, strict OpenSSH verification flags, separate `shell_key`, durable PTY receipts and writer claims. New setups default to `ssh.enabled=false`; both `shell.enabled=true` and `ssh.enabled=true` require offline operator authorization. No SSH tools are available through public `/mode/mcp`. A real remote host handshake has **not** been tested; connectivity remains unverified until independent acceptance. See [G5.1 RC7 evidence](docs/v1/G5_RC7_MANAGED_SSH_EVIDENCE.md).
+
+## v1.0 RC8 — SSH localhost acceptance and fail-closed recovery
+
+G5.2 verified a real OpenSSH host-key-pinned public-key handshake and remote PTY command against a disposable `sshd` on `127.0.0.1`. Deliberately wrong host keys and wrong client identities were rejected by the real client. A repeatable **manual** acceptance script is included at `server/scripts/verify_ssh_loopback.py`. Restart observers now report unattached sessions as `detached_unverified` without releasing writer claims, replaying commands or claiming PTY reattachment. Full regression passes, but external remote SSH hosts and production Web/Mobile E2E remain unverified. See [G5.2 RC8 evidence](docs/v1/G5_RC8_SSH_ACCEPTANCE_RECOVERY.md).

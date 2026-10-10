@@ -5,6 +5,7 @@ No remote shell endpoint is published in the public ChatGPT MCP gateway.
 """
 import base64
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -117,6 +118,24 @@ class SSHManager(ShellManager):
         profile, executable, known_bytes, key_bytes, known_hash = validate_ssh_profile(
             self.config, profile_id)
         with self.lock:
+            intent_sha256 = hashlib.sha256(json.dumps({
+                "profile_id": profile_id,
+                "project_id": profile["project_id"],
+                "host": profile["host"], "user": profile["user"],
+                "port": profile["port"], "executable": executable,
+                "host_key_sha256": known_hash,
+                "identity_sha256": hashlib.sha256(key_bytes).hexdigest(),
+            }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            request_id = 'ssh:' + profile_id + ':' + request_key
+            with self.store.lock:
+                previous = self.store.db.execute(
+                    "SELECT id FROM operator_shell_sessions WHERE request_key=?",
+                    (request_id,),
+                ).fetchone()
+            if previous is not None and previous["id"] in self.sessions:
+                before = self.sessions[previous["id"]].get("launch_metadata") or {}
+                if before.get("ssh_intent_sha256") != intent_sha256:
+                    raise Fault(409, "SSH request key conflicts with changed pinned profile")
             # Per-open immutable authentication snapshots. Never load ~/.ssh/config,
             # agent forwarding, ssh-agent or external ProxyCommand mechanisms.
             snapshot = Path(self.home.name) / ('ssh-keys-' + os.urandom(9).hex())
@@ -153,17 +172,27 @@ class SSHManager(ShellManager):
                 'host': profile['host'], 'port': profile['port'],
                 'remote_user': profile['user'], 'known_hosts_sha256': known_hash,
                 'host_key_policy': 'strict-pinned', 'remote_session_attested': False,
+                'ssh_intent_sha256': intent_sha256,
             }
+            registration = []
             try:
                 result = super().open(
-                    profile['project_id'], request_key='ssh:' + profile_id + ':' + request_key,
+                    profile['project_id'], request_key=request_id,
                     columns=columns, rows=rows,
                     _launch_argv=argv, _launch_metadata=receipt,
+                    _on_registered=lambda sid: (
+                        registration.append(sid),
+                        self.ssh_snapshots.__setitem__(sid, snapshot),
+                    ),
                 )
             except Exception:
-                shutil.rmtree(snapshot)
+                if snapshot.exists():
+                    shutil.rmtree(snapshot)
                 raise
-            self.ssh_snapshots[result['session_id']] = snapshot
+            if not registration:
+                # Idempotent open reused an existing session; never overwrite
+                # the original key snapshot with a newly copied credential.
+                shutil.rmtree(snapshot)
             return self.status(result['session_id'])
 
     def _finish(self, entry, code):
@@ -178,8 +207,8 @@ class SSHManager(ShellManager):
 
     def status(self, sid):
         outcome = super().status(sid)
-        entry = self.sessions[sid]
-        details = entry.get('launch_metadata') or {}
+        entry = self.sessions.get(sid)
+        details = entry.get('launch_metadata') if entry else None
         if details:
             outcome.update({
                 'transport': 'ssh', 'profile_id': details['profile_id'],
@@ -187,4 +216,17 @@ class SSHManager(ShellManager):
                 'connection_state': 'unverified' if outcome['active']
                     else 'process_exited',
             })
+        elif entry is None:
+            with self.store.lock:
+                record = self.store.db.execute(
+                    "SELECT request_key FROM operator_shell_sessions WHERE id=?",
+                    (sid,)).fetchone()
+            key = record["request_key"] if record else ""
+            if key.startswith("ssh:"):
+                outcome.update({
+                    'transport': 'ssh',
+                    'profile_id': key[4:].split(':', 1)[0],
+                    'connection_state': 'detached_unverified'
+                        if outcome["reconciliation_required"] else 'process_exited',
+                })
         return outcome

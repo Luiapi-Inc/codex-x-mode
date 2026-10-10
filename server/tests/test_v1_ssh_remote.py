@@ -81,6 +81,32 @@ class ManagedSSHTests(unittest.TestCase):
         self.assertIn('"transport": "ssh"', receipt)
         self.assertIn('"profile_id": "staging"', receipt)
 
+    def test_open_replay_cannot_replace_credentials_or_leak_snapshots(self):
+        first = self.manager.open("staging", request_key="same-key")
+        sid = first["session_id"]
+        original = self.manager.ssh_snapshots[sid]
+        self.assertTrue((original / "identity").exists())
+        repeated = self.manager.open("staging", request_key="same-key")
+        self.assertEqual(repeated["session_id"], sid)
+        self.assertEqual(self.manager.ssh_snapshots[sid], original)
+        self.assertEqual(
+            list(Path(self.manager.home.name).glob("ssh-keys-*")), [original]
+        )
+        self.manager.close(sid)
+        self.assertFalse(original.exists())
+
+    def test_idempotency_key_rejects_changed_remote_destination(self):
+        sid = self.manager.open("staging", request_key="same-remote-contract")["session_id"]
+        self.config["ssh"]["profiles"]["staging"]["user"] = "differentuser"
+        with self.assertRaises(Fault) as conflict:
+            self.manager.open("staging", request_key="same-remote-contract")
+        self.assertEqual(conflict.exception.status, 409)
+        self.assertEqual(self.manager.status(sid)["remote_user"]
+                         if "remote_user" in self.manager.status(sid)
+                         else self.manager.sessions[sid]["launch_metadata"]["remote_user"],
+                         "remoteuser")
+        self.manager.close(sid)
+
     def test_disabled_config_and_unknown_profile(self):
         self.config["ssh"]["enabled"] = False
         with self.assertRaises(Fault):
@@ -225,6 +251,41 @@ class ManagedSSHTests(unittest.TestCase):
         validated["ssh"]["profiles"]["staging"]["port"] = 0
         with self.assertRaises(ConfigFault):
             ConfigKernel._validate(validated)
+
+    def test_fast_exiting_ssh_cleans_credential_snapshot_without_manager_shutdown(self):
+        quick = self.root / "fast-exit-ssh"
+        quick.write_text("#!/bin/sh\nexit 255\n")
+        quick.chmod(0o700)
+        self.config["ssh"]["executable"] = str(quick)
+        for number in range(8):
+            sid = self.manager.open("staging", request_key=f"fast-{number}")["session_id"]
+            for _ in range(100):
+                if not self.manager.status(sid)["active"]:
+                    break
+                time.sleep(.015)
+            self.assertFalse(self.manager.status(sid)["active"])
+            self.assertNotIn(sid, self.manager.ssh_snapshots)
+            self.assertFalse(
+                list(Path(self.manager.home.name).glob("ssh-keys-*")),
+                "Fast-exiting SSH must not leak copied private key snapshots",
+            )
+
+    def test_restart_observer_does_not_fabricate_ssh_handshake_attestation(self):
+        sid = self.manager.open("staging", request_key="ssh-recovery-test")["session_id"]
+        observer = SSHManager(self.config, self.store)
+        try:
+            detached = observer.status(sid)
+            self.assertEqual(detached["state"], "detached_unverified")
+            self.assertEqual(detached["transport"], "ssh")
+            self.assertEqual(detached["profile_id"], "staging")
+            self.assertEqual(detached["connection_state"], "detached_unverified")
+            self.assertTrue(detached["reconciliation_required"])
+            with self.assertRaises(Fault):
+                observer.open("staging", request_key="ssh-recovery-test")
+        finally:
+            observer.shutdown()
+        self.assertTrue(self.manager.status(sid)["active"])
+        self.manager.close(sid)
 
     def test_writer_claim_blocks_ssh_session_before_launch(self):
         claim = self.store.acquire_app_writer(resource_id=str(self.project),
