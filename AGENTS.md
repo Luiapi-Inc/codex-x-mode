@@ -1,40 +1,29 @@
-# AGENTS.md
+# Codex X Mode v1 — Repository Instructions
 
-## Authority
+## Authority and workflow
 
-Read `docs/CODEX_X_MODE_SOURCE_OF_TRUTH.md` before changing dispatch, model routing, MCP, release, deployment, or acceptance behavior.
+- v1 development uses `main` and `docs/v1/MASTER_DEVELOPMENT_PLAN.md` as the current design specification.
+- The `archive/v0.2.23-legacy` branch is historical reference only. v0.x APIs, tool counts, routes and model mappings are not mandatory v1 behavior.
+- Work in this order: Requirement → Plan → Implementation → Tests → Evidence → Review.
+- Inspect source and active worktrees before changes; preserve user WIP.
+- Keep changes narrow, test behavior changes, and avoid speculative refactors.
 
-## Non-negotiable architecture
+## Runtime and security
 
-Web-originated execution must remain:
+- Expose a single, curated ChatGPT MCP gateway. Keep the Admin API separate from MCP permissions.
+- Native Codex controls Native Codex inference; optional providers cannot impersonate it.
+- Route selection must not silently substitute models or providers.
+- Authenticate and authorize every mutation server-side. Enforce project allowlists and canonical path containment.
+- Before non-idempotent execution, persist intent and acquire appropriate resource ownership transactionally.
+- Unknown execution after a lost response must be reconciled; do not replay, forcibly release claims, or overwrite shared workspace state on assumption.
+- Preserve durable tasks, audit trails, secrets isolation, exact execution receipts, and acceptance evidence.
+- A provider reporting `completed` is not proof that the accepted work contract passed.
+- Never expose secrets, unrestricted shell/filesystem tools, internal provider APIs or state DB publicly.
 
-```text
-ChatGPT Web -> Codex X Mode bridge -> Native Codex app-server -> exact chatgpt-web/<version> -> project-owned Web route adapter -> ChatGPT Web backend
-```
+## Development and release boundaries
 
-Do not route Web-originated tasks to `chatgpt_plan`.
-Do not silently substitute a non-`chatgpt-web/*` model.
-
-## Self-contained boundary
-
-The runtime must not require another ChatGPT Plugin, external Tool, external Skill, or external MCP package. Required Skill/Tool/MCP/model-routing/validation behavior must live in this repository.
-
-Using local development tooling to inspect or edit this repository does not make that tooling a runtime dependency.
-
-## Engineering workflow
-
-Requirement -> Plan -> Implementation -> Test -> Evidence -> Review
-
-- inspect source/evidence first
-- make the smallest safe change
-- avoid unrelated refactors
-- add/update tests for behavior changes
-- preserve idempotency and unknown-task safety
-- never replay an ambiguous `turn/start`
-- never claim PASS without executed evidence
-- keep secrets and machine-local state out of Git
-
-## Release rule
-
-`0.2.11` is a bootstrap/reference checkpoint only and is not architecture acceptance.
-Architecture corrections must ship as a new semver release (`>=0.2.12`).
+- Implementation uses isolated tests/worktrees for risky work, and preserves any active workspace writer claims.
+- Do not deploy, restart production services, alter Cloudflare, publish Plugins, delete unrelated files or migrate live databases without explicit authorization.
+- Native tool/model inventory and API support must be verified against the active installed versions.
+- Every milestone needs actual executed test evidence. Unit tests are not a substitute for Web/Mobile remote E2E.
+- Never claim a release is complete without independent acceptance and an explicit GO.
