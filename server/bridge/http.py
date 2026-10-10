@@ -33,6 +33,7 @@ class Server(ThreadingHTTPServer):
     def __init__(self, address, config, store, start_worker=True):
         super().__init__(address, Handler)
         self.config, self.store = dict(config, _dispatch_origin="web"), store
+        self.policy_lock = threading.RLock()
         self.stop_worker = threading.Event()
         self.worker_thread = None
         if start_worker:
@@ -140,7 +141,8 @@ class Handler(BaseHTTPRequestHandler):
                     state = {"version": version}
                 surface = ("codex_x_app" if path in ("/codex-x-app/mcp", "/app/mcp")
                            else "unified" if path == "/mode/mcp" else "codex_x")
-                response = rpc_response(request, self.server.config, store, state, surface)
+                with self.server.policy_lock:
+                    response = rpc_response(request, self.server.config, store, state, surface)
             except RpcError as exc:
                 error = {"code": exc.code, "message": str(exc)}
                 if exc.data is not None:

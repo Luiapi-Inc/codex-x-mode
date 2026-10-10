@@ -35,6 +35,7 @@ def main():
     setup.add_argument("--model-version", help="Preferred exact chatgpt-web/<version> ID from Native Codex model/list")
     serve = commands.add_parser("serve")
     serve.add_argument("--port", type=int, default=8240)
+    serve.add_argument("--admin-port", type=int, help="Opt-in local-only Admin API; requires admin_key")
     commands.add_parser("mcp-stdio")
     commands.add_parser("codex-x-app-mcp-stdio")
     export = commands.add_parser("schema")
@@ -65,11 +66,11 @@ def main():
         if not cwd.is_dir():
             parser.error("cwd must be an existing project directory")
         config = {"gpt_key": secrets.token_urlsafe(32), "provider_key": secrets.token_urlsafe(32),
-                  "mcp_key": secrets.token_urlsafe(32),
+                  "mcp_key": secrets.token_urlsafe(32), "admin_key": secrets.token_urlsafe(32),
                   "projects": {args.project: {"cwd": str(cwd), "allow_write": args.allow_write}},
                   "codex_command": ["codex"], "backend_timeout_seconds": 600, "task_timeout_seconds": 600,
                   "config_schema_version": 1,
-                  "mcp_policy": {"mode": "read-only"},
+                  "mcp_policy": {"mode": "read-only"}, "allowed_origins": [],
                   "web_model_policy": "native",
                   }
         if args.model_version is not None:
@@ -167,12 +168,29 @@ def main():
             lock_file.close()
         return
     server = Server(("127.0.0.1", args.port), config, store)
-    print(f"Bridge listening on loopback port {server.server_port}. HTTPS is required for GPT Actions or remote MCP.")
+    admin = None
+    admin_thread = None
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        if args.admin_port is not None:
+            if not 1 <= args.admin_port <= 65535 or args.admin_port == server.server_port:
+                parser.error("Admin port must be distinct and in range 1..65535")
+            from .admin import AdminServer
+            admin = AdminServer(("127.0.0.1", args.admin_port), config, store, server,
+                                config_path=config_path)
+            admin_thread = threading.Thread(target=admin.serve_forever, daemon=True)
+            admin_thread.start()
+            print(f"Local-only Admin API on 127.0.0.1:{admin.server_port}; remote ingress disabled.")
+        print(f"Bridge listening on loopback port {server.server_port}. HTTPS is required for remote MCP.")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
     finally:
+        if admin is not None:
+            if admin_thread is not None:
+                admin.shutdown()
+                admin_thread.join(timeout=10)
+            admin.server_close()
         server.server_close()
         store.close()
         lock_file.close()

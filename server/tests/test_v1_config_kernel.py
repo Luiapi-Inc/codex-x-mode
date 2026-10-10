@@ -128,6 +128,17 @@ class ConfigKernelTests(unittest.TestCase):
         self.assertTrue(applied["requires_reload"])
         self.assertNotEqual(applied["revision"], expected)
 
+    def test_history_integrity_rejects_tampered_snapshot(self):
+        before = self.kernel.snapshot()["revision"]
+        self.kernel.apply({"mcp_policy": {"mode": "explicit", "allowed_tools": ["codex_x_status"]}},
+                          expected_revision=before)
+        self.assertEqual(self.kernel.read_history(before), self.original)
+        archive = self.root / "private.json.history" / (before + ".json")
+        archive.write_bytes(b'{"tampered":true}')
+        with self.assertRaises(ConfigFault) as mismatch:
+            self.kernel.read_history(before)
+        self.assertEqual(mismatch.exception.status, 409)
+
     def test_symlink_config_and_insecure_mode_rejected(self):
         alias = self.root / "alias.json"
         alias.symlink_to(self.path)

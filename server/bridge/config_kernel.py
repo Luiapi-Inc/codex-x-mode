@@ -165,6 +165,35 @@ class ConfigKernel:
         if tasks is not None or writers is not None:
             raise ConfigFault(409, "Active or unknown run prevents project configuration change")
 
+    def read_history(self, revision):
+        """Read a private snapshot by exact digest without trusting a path."""
+        if not isinstance(revision, str) or len(revision) != 64 or any(
+            ch not in "0123456789abcdef" for ch in revision
+        ):
+            raise ConfigFault(400, "Invalid history revision")
+        directory = self.path.with_name(self.path.name + ".history")
+        if directory.is_symlink() or not directory.is_dir() or stat.S_IMODE(directory.stat().st_mode) & 0o077:
+            raise ConfigFault(404, "Private history unavailable")
+        target = directory / (revision + ".json")
+        try:
+            fd = os.open(str(target), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as stream:
+                mode = os.fstat(stream.fileno()).st_mode
+                if not stat.S_ISREG(mode) or stat.S_IMODE(mode) & 0o077:
+                    raise ConfigFault(403, "Insecure history entry")
+                raw = stream.read(1024 * 1024 + 1)
+        except OSError as exc:
+            raise ConfigFault(404, "Private history unavailable") from exc
+        if _revision(raw) != revision:
+            raise ConfigFault(409, "Private history digest mismatch")
+        try:
+            value = json.loads(raw)
+        except ValueError as exc:
+            raise ConfigFault(409, "Invalid history content") from exc
+        if not isinstance(value, dict):
+            raise ConfigFault(409, "Invalid history content")
+        return value
+
     def apply(self, changes, *, expected_revision):
         lock_path = str(self.path) + ".mutation.lock"
         flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
