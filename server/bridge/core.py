@@ -46,6 +46,9 @@ class Store:
             digest TEXT NOT NULL, created REAL NOT NULL, expires REAL NOT NULL,
             lease TEXT, claim_key TEXT, completion_key TEXT, completion_digest TEXT,
             cancel_key TEXT, cancel_digest TEXT, thread_id TEXT, turn_id TEXT, UNIQUE(kind,request_key))""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS app_thread_scopes (
+            thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+            cwd TEXT NOT NULL, scope TEXT NOT NULL)""")
         self._migrate_columns()
         with self.db:
             self.db.execute("UPDATE jobs SET state='unknown',result=? WHERE kind='task' AND state IN ('running','cancelling')",
@@ -60,6 +63,23 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def record_app_thread(self, thread_id, project_id, cwd, scope):
+        with self.lock, self.db:
+            row = self.db.execute("SELECT project_id,cwd,scope FROM app_thread_scopes WHERE thread_id=?",
+                                  (thread_id,)).fetchone()
+            expected = (project_id, cwd, scope)
+            if row is not None and tuple(row) != expected:
+                raise Fault(409, "Thread already registered with a different scope")
+            if row is None:
+                self.db.execute("INSERT INTO app_thread_scopes(thread_id,project_id,cwd,scope) VALUES(?,?,?,?)",
+                                (thread_id, *expected))
+
+    def app_thread_scope(self, thread_id):
+        with self.lock:
+            row = self.db.execute("SELECT project_id,cwd,scope FROM app_thread_scopes WHERE thread_id=?",
+                                  (thread_id,)).fetchone()
+        return dict(row) if row is not None else None
 
     def _decode(self, row):
         if row is None:

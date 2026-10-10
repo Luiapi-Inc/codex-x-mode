@@ -285,8 +285,8 @@ class DispatchDiagnosticsTests(unittest.TestCase):
                 "supported_reasoning_efforts": ["medium"],
             },
             {
-                "id": "chatgpt-web/fixture-model", "model": "chatgpt-web/fixture-model",
-                "display_name": "Fixture Web Model", "is_default": False,
+                "id": "gpt-5.6-sol", "model": "gpt-5.6-sol",
+                "display_name": "Headless Fixture Model", "is_default": False,
                 "default_reasoning_effort": "high",
                 "supported_reasoning_efforts": ["medium", "high"],
             },
@@ -470,7 +470,7 @@ class DispatchDiagnosticsTests(unittest.TestCase):
         self.assertEqual(value["execution_backends"]["local_stdio"], "codex_app_server")
         self.assertEqual(value["execution_backends"]["web_http"], "codex_app_server")
         self.assertEqual(value["web_model_family"], "chatgpt-web")
-        self.assertEqual(value["chatgpt_plan_authorization"]["state"], "not_required")
+        self.assertEqual(value["chatgpt_web_authorization"]["state"], "native_codex_owned")
         self.assertFalse(value["live_codex_verified"])
 
 
