@@ -10,16 +10,17 @@ Date: 2026-10-10. Scope: first incremental v1 gateway PR; not v1 release accepta
 - HTTP MCP requests require configured server-side bearer authentication; no anonymous administrative write route is introduced.
 - App threads use Native Codex app-server. Project and scope authorization is checked before reads and mutations. Newly created thread ownership is persisted in SQLite; foreign or unprovable Native threads are denied.
 - Web-originated discovery and execution use exact `chatgpt-web/<version>` IDs directly from Native Codex `model/list`. The selected ID and execution model must match; an unprefixed model or alias remap fails closed. Every selected effort must appear in the Native Codex model's supported-effort metadata before the task is queued.
+- Web-originated Codex X App operations that start a turn resolve their requested/default or existing-thread model against Native Codex `model/list`, reject non-Web or unlisted IDs, and send the exact ID plus a supported reasoning effort. Local stdio App operations retain the Native Codex local model behavior.
+- The Native Codex CLI wrapper removes ambient bridge, API-key, access-token, and custom-base-URL credentials before starting the Native command.
 - Persisted tasks using the retired `chatgpt_plan` or `chatgpt_web_headless` route are failed before any provider or app-server is accessed; they are never replayed through a different provider.
 
 ## Locally executed verification
 
-- `cd server && python3 -m unittest discover -s tests -q`: **101 tests passed**.
-- `cd server && python3 -m unittest -q tests.test_v1_unified_mcp tests.test_codex_x_app`: **20 tests passed**.
+- `cd server && python3 -m unittest discover -s tests -q`: **107 tests passed**.
+- `cd server && python3 -m unittest -q tests.test_v1_unified_mcp tests.test_codex_x_app`: **26 tests passed**.
 - `cd server && python3 -m unittest -v tests.test_native_web_dispatch`: **19 tests passed**, including empty-family rejection and fail-closed legacy-route coverage.
 - `python3 -m compileall -q server/bridge server/tests`: passed.
-- `python3 server/scripts/build_bundle.py`: archive SHA-256 `93ed5384d0e95057541b727cd59e989a0fd18bcd26c7d80d91298e984c01b34e`.
-- `git diff --check`: passed.
+- `python3 server/scripts/build_bundle.py`: archive SHA-256 `e3b5f5cece76611dae1e73f9ed11edd2aae69037f1fab438b42f821492f41f38`.
 - `git diff --check`: passed.
 
 ## Limits and remaining v1 work

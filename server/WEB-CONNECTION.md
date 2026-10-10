@@ -68,7 +68,10 @@ turn with a failed captured command is not a passing command test.
 `GET /models` and `codex_x_list_models` use Native Codex app-server
 `model/list`. Web discovery exposes exact `chatgpt-web/<version>` IDs and
 supported/default effort metadata; dispatch sends the exact ID and a supported
-effort through Native Codex. The catalog does not prove completed inference or
+effort through Native Codex. Web-originated Codex X App operations that start
+or continue a turn validate the requested or existing thread model against the
+same Native catalog; new turns explicitly pin the exact ID and supported
+effort. The catalog does not prove completed inference or
 change the current ChatGPT conversation model. Missing/mismatched terminal
 identity or reroutes leave execution `unknown` without replay. Real inference
 remains unverified by local fixture tests.

@@ -9,11 +9,13 @@ from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 
+from .codex import ModelSelectionError, _model_catalog, _select_model
 from .core import Fault
 
 
 SERVER_INFO = {"name": "codex-x-app", "title": "Codex X App", "version": "0.2.12"}
 LOCAL_HOST_ID = "local"
+WEB_MODEL_PREFIX = "chatgpt-web/"
 
 
 def _schema(properties=None, required=None, additional=False):
@@ -342,6 +344,33 @@ def _text_input(prompt):
     return [{"type": "text", "text": prompt}]
 
 
+def _web_model(config, app, requested=None):
+    """Resolve a Web-originated App turn to an exact Native Codex Web model."""
+    try:
+        models = _model_catalog(app)
+    except ModelSelectionError as exc:
+        raise Fault(503, "Native Codex Web model catalog is unavailable") from exc
+    configured_default = config.get("chatgpt_web_default_model")
+    if not isinstance(configured_default, str) or not any(
+        isinstance(item.get("id"), str)
+        and item["id"] == configured_default
+        and item["id"].startswith(WEB_MODEL_PREFIX)
+        and item["model"] == item["id"]
+        for item in models
+    ):
+        configured_default = None
+    try:
+        return _select_model(
+            models,
+            requested,
+            required_prefix=WEB_MODEL_PREFIX,
+            default_model=configured_default,
+            reasoning_effort=config.get("chatgpt_web_reasoning_effort"),
+        )
+    except ModelSelectionError as exc:
+        raise Fault(400, "Exact Native Codex Web model or reasoning effort is unavailable") from exc
+
+
 def _thread(app, thread_id, include_turns=True):
     if not isinstance(thread_id, str) or not thread_id:
         raise Fault(400, "threadId is required")
@@ -481,6 +510,9 @@ def create_thread(config, args, store=None):
     if isinstance(model, str) and model:
         start["model"] = model
     with _session(config) as app:
+        web_model = _web_model(config, app, model) if config.get("_dispatch_origin") == "web" else None
+        if web_model is not None:
+            start["model"] = web_model["model"]
         response = app.call("thread/start", start)
         thread = response.get("thread")
         if not isinstance(thread, dict):
@@ -495,7 +527,10 @@ def create_thread(config, args, store=None):
             "approvalPolicy": "never",
             "input": _text_input(prompt),
         }
-        if isinstance(model, str) and model:
+        if web_model is not None:
+            turn_params["model"] = web_model["model"]
+            turn_params["effort"] = web_model["reasoning_effort"]
+        elif isinstance(model, str) and model:
             turn_params["model"] = model
         turn = app.call("turn/start", turn_params).get("turn", {})
         thread = _thread(app, thread["id"], False)
@@ -515,6 +550,10 @@ def fork_thread(config, args, store=None):
         project_id, project, scope = _authorize_thread(config, source, store)
         params = {"threadId": thread_id, "modelProvider": "openai"}
         model = args.get("model")
+        web_model = None
+        if config.get("_dispatch_origin") == "web" and ("prompt" in args or (isinstance(model, str) and model)):
+            web_model = _web_model(config, app, model if isinstance(model, str) and model else source.get("model"))
+            model = web_model["model"]
         if isinstance(model, str) and model:
             params["model"] = model
         response = app.call("thread/fork", params)
@@ -529,7 +568,10 @@ def fork_thread(config, args, store=None):
         turn_id = None
         if "prompt" in args:
             turn_params = {"threadId": thread["id"], "input": _text_input(args.get("prompt"))}
-            if isinstance(model, str) and model:
+            if web_model is not None:
+                turn_params["model"] = web_model["model"]
+                turn_params["effort"] = web_model["reasoning_effort"]
+            elif isinstance(model, str) and model:
                 turn_params["model"] = model
             turn_id = app.call("turn/start", turn_params).get("turn", {}).get("id")
         thread = _thread(app, thread["id"], False)
@@ -542,6 +584,7 @@ def send_message_to_thread(config, args, store=None):
     with _session(config) as app:
         thread = _thread(app, args.get("threadId"), True)
         _authorize_thread(config, thread, store)
+        web_model = _web_model(config, app, thread.get("model")) if config.get("_dispatch_origin") == "web" else None
         turns = thread.get("turns") if isinstance(thread.get("turns"), list) else []
         active = [turn for turn in turns if isinstance(turn, dict) and turn.get("status") == "inProgress" and isinstance(turn.get("id"), str)]
         if active:
@@ -552,7 +595,11 @@ def send_message_to_thread(config, args, store=None):
             }).get("turnId")
             mode = "steer"
         else:
-            result = app.call("turn/start", {"threadId": thread["id"], "input": _text_input(prompt)})
+            turn_params = {"threadId": thread["id"], "input": _text_input(prompt)}
+            if web_model is not None:
+                turn_params["model"] = web_model["model"]
+                turn_params["effort"] = web_model["reasoning_effort"]
+            result = app.call("turn/start", turn_params)
             turn_id = result.get("turn", {}).get("id")
             mode = "new_turn"
     return {"hostId": LOCAL_HOST_ID, "threadId": thread["id"], "turnId": turn_id, "mode": mode}

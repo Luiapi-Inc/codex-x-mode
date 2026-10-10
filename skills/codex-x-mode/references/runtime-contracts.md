@@ -36,6 +36,15 @@ uses a valid configured exact Web default or a unique Native Codex account
 default; it never falls back to another provider. Catalog listing does not
 prove entitlement or control the ChatGPT conversation's model.
 
+Web-originated Codex X App operations that start a turn apply the same exact
+model contract. New threads and forks that start a turn resolve their
+requested/default or parent model against Native Codex `model/list`, then send
+the exact ID and supported effort.
+Messages to an existing thread require that thread's model to remain an exact
+listed Web model; idle turns send the ID and effort explicitly, while steering
+keeps the active turn's already selected Native model. Local stdio App calls
+retain local Native Codex model behavior.
+
 The bridge records requested and selected model identity. A completed task is
 accepted only when the terminal event reports that exact model without reroute.
 An absent/mismatched identity leaves execution `unknown`; it is not retried

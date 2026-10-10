@@ -93,7 +93,7 @@ def main():
         extra = args.args[1:] if args.args[:1] == ["--"] else args.args
         command = config["codex_command"] + ["-c", 'model_provider="openai"', *extra]
         env = dict(os.environ)
-        for key in ("CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN", "OPENAI_BASE_URL"):
+        for key in ("CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN", "OPENAI_API_KEY", "OPENAI_BASE_URL"):
             env.pop(key, None)
         raise SystemExit(subprocess.call(command, env=env))
     lock_file = config_path.with_suffix(".lock").open("a")

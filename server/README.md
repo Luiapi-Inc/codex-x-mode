@@ -10,7 +10,7 @@ It supports three surfaces on the same local state/config:
 | MCP HTTP + GPT Actions | Canonical `/mode/mcp` gateway plus compatibility surfaces and Actions | Bearer `mcp_key` / `gpt_key` |
 | Responses provider | Local Codex backend turn relay | Bearer `provider_key`, keep private |
 
-Web and local task dispatch use Native Codex app-server. Web exposes exact `chatgpt-web/<version>` IDs from Native Codex `model/list`, requires a supported model reasoning effort, and fails closed on missing or mismatched terminal identity. This package's fixture tests do not prove live inference.
+Web and local task dispatch use Native Codex app-server. Web-originated Core tasks and Codex X App turn operations resolve exact `chatgpt-web/<version>` IDs from Native Codex `model/list`, require a supported model reasoning effort, and fail closed on unsupported selections. Core task completion also requires matching terminal identity without reroute. This package's fixture tests do not prove live inference.
 
 This remains a **prototype until live-verified with the user's actual Codex CLI and deployed HTTPS endpoint**. Existing full-suite evidence uses real loopback HTTP/SQLite plus explicit app-server protocol fixtures.
 

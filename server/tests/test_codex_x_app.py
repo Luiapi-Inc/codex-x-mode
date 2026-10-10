@@ -1,6 +1,7 @@
 import http.client
 import json
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -8,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from bridge import codex_x_app
+from bridge import __main__ as bridge_main, codex_x_app
 from bridge.core import Fault, Store
 from bridge.http import Server
 from bridge.mcp import rpc_response
@@ -100,6 +101,35 @@ class CodexXAppContractTests(unittest.TestCase):
         self.assertIn('model_provider="openai"', command)
         self.assertEqual(command[-2:], ["app-server", "--stdio"])
 
+    def test_codex_wrapper_drops_custom_provider_credentials(self):
+        config_path = Path(self.tmp.name) / "bridge.json"
+        config_path.write_text(json.dumps({
+            "gpt_key": "g" * 40, "provider_key": "p" * 40, "mcp_key": "m" * 40,
+            "codex_command": ["codex"], "projects": {},
+        }))
+        config_path.chmod(0o600)
+        captured = {}
+
+        def run(command, *, env):
+            captured["command"] = command
+            captured["env"] = dict(env)
+            return 0
+
+        old_umask = os.umask(0o077)
+        try:
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "api-secret", "OPENAI_BASE_URL": "https://custom.invalid",
+                "ACCESS_TOKEN": "access-secret", "CODEX_BRIDGE_PROVIDER_KEY": "bridge-secret",
+            }, clear=True):
+                with patch.object(bridge_main.subprocess, "call", side_effect=run):
+                    with patch.object(sys, "argv", ["bridge", "--config", str(config_path), "codex"]):
+                        with self.assertRaises(SystemExit):
+                            bridge_main.main()
+        finally:
+            os.umask(old_umask)
+        for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "ACCESS_TOKEN", "CODEX_BRIDGE_PROVIDER_KEY"):
+            self.assertNotIn(key, captured["env"])
+
     def test_managed_stdio_app_reuses_initialized_process(self):
         created = []
 
@@ -155,6 +185,125 @@ class CodexXAppContractTests(unittest.TestCase):
         self.assertEqual(start["sandbox"], "read-only")
         turn = next(params for method, params in fake.calls if method == "turn/start")
         self.assertEqual(turn["input"], [{"type": "text", "text": "Inspect only"}])
+
+    def test_web_create_thread_uses_exact_native_web_model_and_supported_effort(self):
+        config = dict(self.config, _dispatch_origin="web")
+        root = config["projects"]["demo"]["cwd"]
+        model_id = "chatgpt-web/gpt-5.6-sol"
+        thread = {
+            "id": "thread-web", "name": None, "cwd": root,
+            "model": model_id, "modelProvider": "openai",
+            "status": {"type": "active"}, "updatedAt": 1,
+        }
+        fake = FakeApp({
+            "model/list": {"data": [{
+                "id": model_id, "model": model_id, "isDefault": True,
+                "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                "defaultReasoningEffort": "high",
+            }]},
+            "thread/start": {"thread": dict(thread), "cwd": root, "sandbox": {"type": "readOnly"}},
+            "turn/start": {"turn": {"id": "turn-web"}},
+            "thread/read": {"thread": dict(thread)},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            codex_x_app.create_thread(config, {"projectId": "demo", "prompt": "Inspect"}, self.store)
+        start = next(params for method, params in fake.calls if method == "thread/start")
+        turn = next(params for method, params in fake.calls if method == "turn/start")
+        self.assertEqual(start["model"], model_id)
+        self.assertEqual(turn["model"], model_id)
+        self.assertEqual(turn["effort"], "high")
+
+    def test_web_create_thread_rejects_non_web_model_before_thread_creation(self):
+        config = dict(self.config, _dispatch_origin="web")
+        model_id = "chatgpt-web/gpt-5.6-sol"
+        fake = FakeApp({"model/list": {"data": [{
+            "id": model_id, "model": model_id, "isDefault": True,
+            "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+            "defaultReasoningEffort": "high",
+        }]}})
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault):
+                codex_x_app.create_thread(
+                    config,
+                    {"projectId": "demo", "prompt": "Inspect", "model": "gpt-5.6-sol"},
+                    self.store,
+                )
+        self.assertIn("model/list", [method for method, _ in fake.calls])
+        self.assertNotIn("thread/start", [method for method, _ in fake.calls])
+
+    def test_web_send_message_rejects_non_web_parent_model_before_turn(self):
+        config = dict(self.config, _dispatch_origin="web")
+        root = config["projects"]["demo"]["cwd"]
+        thread = {
+            "id": "thread-local-model", "cwd": root, "model": "gpt-5.6-sol",
+            "modelProvider": "openai", "sandbox": "read-only", "turns": [],
+        }
+        fake = FakeApp({"thread/read": {"thread": thread}})
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault):
+                codex_x_app.send_message_to_thread(
+                    config, {"threadId": thread["id"], "prompt": "Continue"}, self.store,
+                )
+        self.assertNotIn("turn/start", [method for method, _ in fake.calls])
+        self.assertNotIn("turn/steer", [method for method, _ in fake.calls])
+
+    def test_web_send_message_pins_parent_model_and_supported_effort(self):
+        config = dict(self.config, _dispatch_origin="web")
+        root = config["projects"]["demo"]["cwd"]
+        model_id = "chatgpt-web/gpt-5.6-sol"
+        thread = {
+            "id": "thread-web-parent", "cwd": root, "model": model_id,
+            "modelProvider": "openai", "sandbox": "read-only", "turns": [],
+        }
+        fake = FakeApp({
+            "thread/read": {"thread": thread},
+            "model/list": {"data": [{
+                "id": model_id, "model": model_id, "isDefault": True,
+                "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                "defaultReasoningEffort": "high",
+            }]},
+            "turn/start": {"turn": {"id": "turn-web-followup"}},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            codex_x_app.send_message_to_thread(
+                config, {"threadId": thread["id"], "prompt": "Continue"}, self.store,
+            )
+        turn = next(params for method, params in fake.calls if method == "turn/start")
+        self.assertEqual(turn["model"], model_id)
+        self.assertEqual(turn["effort"], "high")
+
+    def test_web_fork_with_prompt_pins_parent_model_and_supported_effort(self):
+        config = dict(self.config, _dispatch_origin="web")
+        root = config["projects"]["demo"]["cwd"]
+        model_id = "chatgpt-web/gpt-5.6-sol"
+        source = {
+            "id": "thread-web-source", "cwd": root, "model": model_id,
+            "modelProvider": "openai", "sandbox": "read-only",
+        }
+        fork = {**source, "id": "thread-web-fork"}
+        fake = FakeApp({
+            "thread/read": [{"thread": source}, {"thread": fork}],
+            "model/list": {"data": [{
+                "id": model_id, "model": model_id, "isDefault": True,
+                "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                "defaultReasoningEffort": "high",
+            }]},
+            "thread/fork": {
+                "thread": fork, "cwd": root, "sandbox": {"type": "readOnly"},
+            },
+            "turn/start": {"turn": {"id": "turn-web-fork"}},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            codex_x_app.fork_thread(
+                config,
+                {"threadId": source["id"], "prompt": "Continue"},
+                self.store,
+            )
+        fork_params = next(params for method, params in fake.calls if method == "thread/fork")
+        turn = next(params for method, params in fake.calls if method == "turn/start")
+        self.assertEqual(fork_params["model"], model_id)
+        self.assertEqual(turn["model"], model_id)
+        self.assertEqual(turn["effort"], "high")
 
     def test_created_thread_scope_survives_restart_when_native_read_omits_sandbox(self):
         root = self.config["projects"]["demo"]["cwd"]
