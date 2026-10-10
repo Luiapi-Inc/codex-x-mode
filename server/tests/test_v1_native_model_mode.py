@@ -119,6 +119,40 @@ class NativeModelModeTests(unittest.TestCase):
         self.assertTrue(model["model_identity_verified"])
         self.assertEqual(model["reroutes"], [])
 
+        class NoTerminalModel(StubNative):
+            def receive(self):
+                return {"method": "turn/completed", "params": {
+                    "threadId": "native-thread", "turn": {"id": "native-turn", "status": "completed"},
+                }}
+
+            def call(self, method, params):
+                if method == "thread/read":
+                    return {"thread": {
+                        "id": "native-thread", "model": self.started_model,
+                        "turns": [{"id": "native-turn", "status": "completed"}],
+                    }}
+                return super().call(method, params)
+
+        with patch.object(service, "codex_list_models", return_value={
+            "models": native_models(), "catalog_source": "model/list",
+            "model_entitlement_verified": False
+        }):
+            other = service.create_task(self.config, self.store, {
+                "project_id": "demo", "prompt": "Read only again",
+                "scope": "read-only", "request_key": "native-v1-unverified-readback",
+            })
+        with patch.object(codex, "AppServer", NoTerminalModel):
+            codex.run_task(self.config, self.store, self.store.claim("task"))
+        uncertain = self.store.get(other["id"])
+        self.assertEqual(uncertain["state"], "failed")
+        evidence = uncertain["result"]["model_selection"]
+        self.assertFalse(evidence["model_identity_verified"])
+        self.assertFalse(evidence["inference_verified"])
+        self.assertIsNone(evidence["observed_model"])
+        self.assertTrue(evidence["thread_readback"]["thread_model_matches_selected"])
+        self.assertEqual(evidence["thread_readback"]["turn_status"], "completed")
+        self.assertFalse(evidence["thread_readback"]["terminal_model_identity_verified"])
+
     def test_v1_app_provider_selects_actual_native_executable_id_and_effort(self):
         class App:
             def call(self, method, params):

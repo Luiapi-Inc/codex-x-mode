@@ -12,6 +12,10 @@ The code currently checked out on `main` is transitional implementation and is n
 - Release approval: **NOT GRANTED**
 
 
+## v1.0 RC1 source package (NO-GO)
+
+Source, private Plugin manifest, bridge protocol and OpenAPI metadata are aligned to `1.0.0-rc.1` (`1.0.0rc1` in Python packaging). A clean-extracted RC runs all 161 tests. Native live read-only turns completed with exact selected model and unchanged workspace, but *terminal* model identity was not supplied; G3 remains unverified. See [RC1 live Native evidence](docs/v1/G3_RC1_LIVE_NATIVE_EVIDENCE.md). No deployment or Plugin publication is authorized.
+
 ## V1 G2/G3 development status
 
 The [G2/G3 evidence](docs/v1/G2_G3_IMPLEMENTATION_EVIDENCE.md) records locally verified Policy/Config Kernel, unified MCP, and isolated Native Codex model catalog integration. The production release is not authorized.

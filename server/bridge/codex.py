@@ -316,7 +316,7 @@ def list_models(config, required_prefix=None, *, native_isolated=False):
             backend="codex_app_server",
             native_isolated=native_isolated,
         )
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.12"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "1.0.0-rc.1"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
@@ -395,7 +395,7 @@ def run_task(config, store, job, stop=None):
             native_isolated=dispatch_origin == "web",
         )
         phase = "initialize"
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.12"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "1.0.0-rc.1"}})
         app.send({"method": "initialized", "params": {}})
 
         if dispatch_origin == "web":
@@ -473,6 +473,31 @@ def run_task(config, store, job, stop=None):
                 final = params["turn"]
                 state = {"completed": "completed", "failed": "failed", "interrupted": "interrupted"}.get(final["status"], "unknown")
                 observed_model = final.get("model") if isinstance(final.get("model"), str) else None
+                # Recent Native app-server releases may omit model in
+                # turn/completed. Thread-level model is useful diagnostic
+                # provenance, but cannot attest to actual terminal inference.
+                thread_readback = None
+                if (observed_model is None and dispatch_origin == "web"
+                        and config.get("web_model_policy") == "native"):
+                    try:
+                        native_read = app.call("thread/read", {
+                            "threadId": thread["id"], "includeTurns": True,
+                        })
+                        native_thread = native_read.get("thread", {})
+                        matched = [value for value in native_thread.get("turns", [])
+                                   if isinstance(value, dict) and value.get("id") == turn["id"]]
+                        if native_thread.get("id") == thread["id"] and len(matched) == 1:
+                            thread_readback = {
+                                "source": "thread/read",
+                                "thread_model_matches_selected":
+                                    native_thread.get("model") == selected_model["model"],
+                                "turn_status": matched[0].get("status"),
+                                "terminal_model_identity_verified": False,
+                            }
+                    except Exception as exc:
+                        thread_readback = {"source": "thread/read",
+                                           "readback_error_type": type(exc).__name__,
+                                           "terminal_model_identity_verified": False}
                 model_verified = not model_reroutes and observed_model == selected_model["model"]
                 inference_verified = final["status"] == "completed" and model_verified
                 if not model_verified:
@@ -497,6 +522,7 @@ def run_task(config, store, job, stop=None):
                             "catalog_integrity_verified": True,
                             "explicitly_sent": True,
                             "observed_model": observed_model,
+                            "thread_readback": thread_readback,
                             "reroutes": model_reroutes,
                             "model_identity_verified": model_verified,
                             "inference_verified": inference_verified,
