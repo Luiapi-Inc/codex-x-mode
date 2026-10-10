@@ -81,7 +81,8 @@ class ShellManager:
         }
         return env
 
-    def open(self, project_id, *, request_key, columns=80, rows=24):
+    def open(self, project_id, *, request_key, columns=80, rows=24,
+             _launch_argv=None, _launch_metadata=None):
         with self.lock:
             shell = self._settings()
             _token(request_key, "request_key")
@@ -117,11 +118,20 @@ class ShellManager:
                     (sid, request_key, project_id, claim["id"], cols, lines, "starting", time.time()),
                 )
             master = slave = None
+            # _launch_argv is internal-only: public Shell RPC never exposes it.
+            # An authorized SSH profile may select its pinned transport argv.
+            argv = [shell] if _launch_argv is None else _launch_argv
+            if not isinstance(argv, list) or not argv or not all(
+                isinstance(part, str) and part and "\x00" not in part for part in argv
+            ):
+                raise Fault(503, "Invalid configured PTY transport")
+            if _launch_metadata is not None and not isinstance(_launch_metadata, dict):
+                raise Fault(503, "Invalid operator transport receipt")
             try:
                 master, slave = pty.openpty()
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", lines, cols, 0, 0))
                 proc = subprocess.Popen(
-                    [shell], cwd=str(root), env=self._env(sid),
+                    argv, cwd=str(root), env=self._env(sid),
                     stdin=slave, stdout=slave, stderr=slave,
                     start_new_session=True, close_fds=True,
                 )
@@ -148,6 +158,7 @@ class ShellManager:
                 "chunks": bytearray(), "base": 0, "total": 0,
                 "digest": hashlib.sha256(), "columns": cols, "rows": lines,
                 "state": "running", "exit_code": None,
+                "launch_metadata": _launch_metadata or {},
             }
             self.sessions[sid] = entry
             with self.store._immediate_transaction():
@@ -219,6 +230,7 @@ class ShellManager:
             "exit_code": code, "output_sha256": entry["digest"].hexdigest(),
             "output_bytes": entry["total"], "process_exited": True,
             "project_id": entry["project_id"],
+            **entry["launch_metadata"],
         }
         try:
             with self.store._immediate_transaction():

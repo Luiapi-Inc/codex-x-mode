@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 from .core import Fault
 from .shell_pty import ShellManager
+from .ssh_remote import SSHManager
 
 
 def schema(properties, required=()):
@@ -35,7 +36,21 @@ TOOLS = [
      "annotations": {"readOnlyHint": name in ("read", "status", "list")}}
     for name, (props, required) in DEFINITIONS.items()
 ]
-TOOL_MAP = {t["name"]: t for t in TOOLS}
+SSH_TOOLS = [
+    {**tool,
+     "name": tool["name"].replace("codex_x_shell_", "codex_x_ssh_"),
+     "description": "Managed pinned-profile SSH remote PTY: " + tool["name"],
+     "inputSchema": (
+         schema({
+             "profile_id": {"type": "string"}, "request_key": {"type": "string"},
+             "columns": {"type": "integer"}, "rows": {"type": "integer"},
+         }, ("profile_id", "request_key"))
+         if tool["name"] == "codex_x_shell_open" else tool["inputSchema"]
+     ),
+    }
+    for tool in TOOLS
+]
+TOOL_MAP = {t["name"]: t for t in (*TOOLS, *SSH_TOOLS)}
 
 
 class OperatorShellServer(ThreadingHTTPServer):
@@ -54,8 +69,14 @@ class OperatorShellServer(ThreadingHTTPServer):
         super().__init__(address, OperatorShellHandler)
         self.shell_key = key
         self.manager = ShellManager(config, store)
+        self.ssh_manager = SSHManager(config, store)
+        self.operator_tools = list(TOOLS)
+        if config.get("ssh", {}).get("enabled") is True:
+            self.operator_tools.extend(SSH_TOOLS)
+        self.operator_tool_map = {tool["name"]: tool for tool in self.operator_tools}
 
     def server_close(self):
+        self.ssh_manager.shutdown()
         self.manager.shutdown()
         super().server_close()
 
@@ -134,7 +155,7 @@ class OperatorShellHandler(BaseHTTPRequestHandler):
                           "capabilities": {"tools": {}},
                           "serverInfo": {"name": "codex-x-operator-shell", "version": "1.0.0"}}
             elif method == "tools/list":
-                result = {"tools": TOOLS}
+                result = {"tools": self.server.operator_tools}
             elif method == "ping":
                 result = {}
             elif method == "tools/call":
@@ -153,18 +174,18 @@ class OperatorShellHandler(BaseHTTPRequestHandler):
 
     def tool_call(self, params):
         name = params.get("name")
-        if name not in TOOL_MAP:
+        if name not in self.server.operator_tool_map:
             return self.tool_error(404, "Unknown operator tool")
         args = params.get("arguments", {})
         if not isinstance(args, dict):
             return self.tool_error(400, "Expected tool arguments object")
-        schema_ = TOOL_MAP[name]["inputSchema"]
+        schema_ = self.server.operator_tool_map[name]["inputSchema"]
         if set(args) - set(schema_["properties"]) or any(
             field not in args for field in schema_["required"]
         ):
             return self.tool_error(400, "Unexpected or missing tool argument")
         try:
-            value = self.invoke(name.removeprefix("codex_x_shell_"), args)
+            value = self.invoke(name.removeprefix("codex_x_"), args)
             result = {"structuredContent": value}
         except Fault as exc:
             result = self.tool_error(exc.status, str(exc))
@@ -178,8 +199,20 @@ class OperatorShellHandler(BaseHTTPRequestHandler):
             "error": {"status": code, "message": message}}}
 
     def invoke(self, name, args):
-        m = self.server.manager
+        if name.startswith("ssh_"):
+            m = self.server.ssh_manager
+            name = name.removeprefix("ssh_")
+            remote = True
+        elif name.startswith("shell_"):
+            m = self.server.manager
+            name = name.removeprefix("shell_")
+            remote = False
+        else:
+            raise Fault(404, "Unknown operator transport")
         if name == "open":
+            if remote:
+                return m.open(args["profile_id"], request_key=args["request_key"],
+                              columns=args.get("columns", 80), rows=args.get("rows", 24))
             return m.open(args["project_id"], request_key=args["request_key"],
                           columns=args.get("columns", 80), rows=args.get("rows", 24))
         if name == "write":

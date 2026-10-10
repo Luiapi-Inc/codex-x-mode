@@ -55,3 +55,7 @@ Authenticated loopback Serena MCP passed local integration, but **not** ChatGPT 
 ## v1.0 RC6 — Native Full Shell (operator-only)
 
 A real PTY supports interactive shell sessions, input/output, binary-safe output, resize, signals and session lifecycle. Enable via private shell.enabled=true and an explicit local --shell-port listener; a distinct shell_key is required. The public /mode/mcp endpoint does not expose shell tools. A full OS-user shell is NOT a filesystem sandbox, and remote SSH transport requires separate acceptance. See docs/v1/G5_RC6_FULL_SHELL_EVIDENCE.md.
+
+## v1.0 RC7 — Managed SSH over Native PTY (development only)
+
+G5.1 introduces named-profile SSH sessions through the **local operator-only MCP listener**. Use pinned `known_hosts`, owner-only identity files, strict OpenSSH verification flags, separate `shell_key`, durable PTY receipts and writer claims. New setups default to `ssh.enabled=false`; both `shell.enabled=true` and `ssh.enabled=true` require offline operator authorization. No SSH tools are available through public `/mode/mcp`. A real remote host handshake has **not** been tested; connectivity remains unverified until independent acceptance. See [G5.1 RC7 evidence](docs/v1/G5_RC7_MANAGED_SSH_EVIDENCE.md).

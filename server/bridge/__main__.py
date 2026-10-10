@@ -86,6 +86,7 @@ def main():
                   "serena": {"enabled": False, "context": "chatgpt",
                              "allow_mutations": False, "timeout_seconds": 45},
                   "shell": {"enabled": False, "executable": "/bin/sh"},
+                  "ssh": {"enabled": False, "executable": "/usr/bin/ssh", "profiles": {}},
                   }
         if args.model_version is not None:
             config["chatgpt_web_default_model"] = args.model_version

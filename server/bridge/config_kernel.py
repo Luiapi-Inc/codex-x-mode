@@ -24,7 +24,7 @@ class ConfigFault(Exception):
         self.status = status
 
 
-_MUTABLE = frozenset({"mcp_policy", "allowed_origins", "projects", "web_model_policy", "serena", "shell"})
+_MUTABLE = frozenset({"mcp_policy", "allowed_origins", "projects", "web_model_policy", "serena", "shell", "ssh"})
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -81,6 +81,26 @@ class ConfigKernel:
 
     @staticmethod
     def _validate(next_config):
+        if "ssh" in next_config:
+            setting = next_config["ssh"]
+            if (not isinstance(setting, dict) or set(setting) - {
+                "enabled", "profiles", "executable"
+            } or type(setting.get("enabled")) is not bool
+                or not isinstance(setting.get("profiles", {}), dict)
+                or not isinstance(setting.get("executable", "/usr/bin/ssh"), str)):
+                raise ConfigFault(400, "Invalid managed SSH configuration")
+            if setting["enabled"]:
+                if next_config.get("shell", {}).get("enabled") is not True:
+                    raise ConfigFault(400, "Managed SSH requires enabled local operator PTY")
+                from .ssh_remote import validate_ssh_profile
+                from .core import Fault
+                if not setting["profiles"]:
+                    raise ConfigFault(400, "Managed SSH needs at least one pinned profile")
+                for name in setting["profiles"]:
+                    try:
+                        validate_ssh_profile(next_config, name)
+                    except Fault as exc:
+                        raise ConfigFault(400, "Managed SSH profile not verified: " + str(exc)) from exc
         if "shell" in next_config:
             shell = next_config["shell"]
             if (not isinstance(shell, dict)

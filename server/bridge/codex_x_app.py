@@ -14,7 +14,7 @@ from .codex import ModelSelectionError, _isolated_native_codex_env, _model_catal
 from .core import Fault
 
 
-SERVER_INFO = {"name": "codex-x-app", "title": "Codex X App", "version": "1.0.0-rc.6"}
+SERVER_INFO = {"name": "codex-x-app", "title": "Codex X App", "version": "1.0.0-rc.7"}
 LOCAL_HOST_ID = "local"
 WEB_MODEL_PREFIX = "chatgpt-web/"
 
@@ -378,7 +378,7 @@ def _managed_app(config, timeout=60):
                     env = _native_env()
                 app = _ManagedNativeApp(command, env=env, timeout=timeout, cleanup=cleanup)
                 cleanup = None
-                app.call("initialize", {"clientInfo": {"name": "codex_x_mode_codex_x_app", "title": "Codex X App", "version": "1.0.0-rc.6"}}, timeout=max(10, timeout))
+                app.call("initialize", {"clientInfo": {"name": "codex_x_mode_codex_x_app", "title": "Codex X App", "version": "1.0.0-rc.7"}}, timeout=max(10, timeout))
                 app.send({"method": "initialized", "params": {}})
             except Exception as exc:
                 try:
