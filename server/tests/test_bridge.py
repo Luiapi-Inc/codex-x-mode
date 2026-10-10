@@ -740,9 +740,15 @@ class HTTPTests(unittest.TestCase):
         (root / "hello.txt").write_text("hello MCP\n")
         (Path(self.tmp.name) / "secret.txt").write_text("outside")
         (root / "leak.txt").symlink_to(Path(self.tmp.name) / "secret.txt")
+        native_home = Path(self.tmp.name) / "native-codex-home"
+        native_home.mkdir()
+        auth_file = native_home / "auth.json"
+        auth_file.write_text("{}", encoding="utf-8")
+        auth_file.chmod(0o600)
         self.config = {"gpt_key": "g" * 40, "provider_key": "p" * 40, "mcp_key": "m" * 40,
                        "projects": {"demo": {"cwd": str(root.resolve()), "allow_write": False}},
                        "codex_command": [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))],
+                       "native_codex_home": str(native_home),
                        "chatgpt_web_default_model": "chatgpt-web/gpt-5.6-sol",
                        "backend_timeout_seconds": 2}
         self.server = Server(("127.0.0.1", 0), self.config, self.store, start_worker=False)
