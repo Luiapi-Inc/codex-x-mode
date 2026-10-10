@@ -19,7 +19,7 @@
     "shortDescription": "Codex backend & dispatch"
   },
   "name": "codex-x-mode",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "description": "Self-contained Codex dispatch and backend-turn bridge with exact dispatch model selection, scoped project reads, recovery, and reproducible evidence.",
   "author": {
     "name": "Lui"

@@ -37,6 +37,7 @@ def main():
     serve.add_argument("--port", type=int, default=8240)
     serve.add_argument("--admin-port", type=int, help="Opt-in local-only Admin API; requires admin_key")
     commands.add_parser("mcp-stdio")
+    commands.add_parser("native-protocol-check", help="Inspect installed Native schema; never runs inference")
     commands.add_parser("codex-x-app-mcp-stdio")
     export = commands.add_parser("schema")
     export.add_argument("--url", required=True)
@@ -60,6 +61,14 @@ def main():
     if args.command == "schema":
         Path(args.output).write_text(dump(args.url) + "\n")
         print("OpenAPI written to", args.output)
+        return
+    if args.command == "native-protocol-check":
+        from .native_protocol import probe_native_protocol_cli, NativeProtocolError
+        try:
+            result = probe_native_protocol_cli()
+        except NativeProtocolError as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, sort_keys=True))
         return
     if args.command == "setup":
         cwd = Path(args.cwd).resolve(strict=True)

@@ -63,7 +63,7 @@ def status(config, store):
     unknown = store.unknown_projects()
     return {
         "status": "up",
-        "version": "1.0.0-rc.1",
+        "version": "1.0.0-rc.2",
         "live_codex_verified": False,
         "projects": len(config.get("projects", {})),
         "unknown_projects": unknown,

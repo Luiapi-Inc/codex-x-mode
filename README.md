@@ -33,3 +33,7 @@ python3 -m bridge --config /path/to/private.json serve --port 8240 --admin-port 
 The local Admin HTTP endpoints provide a redacted config snapshot and a guarded `preview` / signed `apply` / `rollback` flow. Live updates support only existing `mcp_policy` and `allowed_origins` fields, with revision CAS and audit. This is **not** a Cloudflare Access-integrated remote Admin API; remote ingress must remain disabled until independently verified signed Access JWT enforcement exists.
 
 See [Admin security evidence](docs/v1/G2_ADMIN_API_SECURITY_EVIDENCE.md).
+
+## v1.0 RC2 — Native protocol capability (NO-GO)
+
+Use `cd server && python3 -m bridge native-protocol-check` to inspect the installed Codex app-server schema without requiring private bridge configuration or triggering inference. The installed CLI used in RC2 verification does **not** expose per-turn executed model identity through `turn/completed` or matching `thread/read.turn`; its thread-level `model` is only configuration metadata. RC2 therefore retains a strict `UNSUPPORTED` model-attestation gate, not a false PASS. See [RC2 protocol schema evidence](docs/v1/G3_RC2_PROTOCOL_SCHEMA_GATE.md).
