@@ -33,14 +33,15 @@ Status: Local real-OpenSSH/localhost acceptance PASS; external-host acceptance N
 
 ## Reproducible tests and packaging
 
-- Source suite **229/229 PASS**.
-- Clean-extracted RC8 suite **229/229 PASS**.
+- Source suite **230/230 PASS**.
+- Clean-extracted RC8 suite **230/230 PASS**.
 - Python AST parse: **49 files PASS**, including the manual localhost acceptance script.
 - Rebuilt deterministic bundle twice with identical SHA-256.
+- GitHub RC8 initial verify found Python 3.15 vs Python 3.11 `gzip.GzipFile` default-level drift despite byte-identical uncompressed TAR. `compresslevel=9` is now explicit and Python 3.11/3.15 builds produced the same complete tar.gz SHA-256. Added a regression test for this contract.
 - Byte parity against clean extraction **57/57 files PASS**.
 - RC8 surfaces: Plugin/Private Plugin/OpenAPI **1.0.0-rc.8**, Python **1.0.0rc8**.
-- RC8 bundle SHA-256 **58b6b63eb648b2289af25f27610a28a48b0e8dbeec46e58ff598b5549d6c639d**.
-- Isolated stage `/Users/luiapi/codex-x-mode-v1-rc8-staging-20261011`.
+- RC8 bundle SHA-256 **f2f3a37e57d89b1a06a16e97b4a4430d79da0bc4dd81f5204678656e7d02629d**.
+- Isolated stage `/Users/luiapi/codex-x-mode-v1-rc8-ci-fixed-20261011`.
 
 ## Release blockers
 

@@ -1,5 +1,4 @@
 import ast
-import ast
 import json
 import tarfile
 import tomllib
@@ -12,6 +11,21 @@ from bridge.service import status
 
 
 class VersionConsistencyTests(unittest.TestCase):
+    def test_runtime_bundle_uses_explicit_cross_version_gzip_level(self):
+        root = Path(__file__).resolve().parents[2]
+        source = ast.parse((root / "server/scripts/build_bundle.py").read_text())
+        gzip_calls = [
+            node for node in ast.walk(source)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "GzipFile"
+        ]
+        self.assertEqual(len(gzip_calls), 1)
+        options = {keyword.arg: keyword.value for keyword in gzip_calls[0].keywords}
+        self.assertEqual(ast.literal_eval(options["compresslevel"]), 9)
+        bundle_header = (root / "assets/codex-x-mode-bridge.tar.gz").read_bytes()[:10]
+        self.assertEqual(bundle_header[:3], bytes((0x1f, 0x8b, 0x08)))
+        self.assertEqual(bundle_header[8], 2)  # GZIP XFL: explicit best compression
+
     def test_release_versions_match_in_package_runtime_and_bundle(self):
         root = Path(__file__).resolve().parents[2]
         manifest = json.loads((root / "plugin.json").read_text())

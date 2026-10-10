@@ -22,7 +22,10 @@ def build():
             info.mode = 0o644
             archive.addfile(info, io.BytesIO(data))
     with output.open("wb") as target:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=target, mtime=0) as compressed:
+        # Python 3.15 changed gzip's default compression level. Fix the
+        # explicit level so artifacts match across local and CI runtimes.
+        with gzip.GzipFile(filename="", mode="wb", fileobj=target,
+                           compresslevel=9, mtime=0) as compressed:
             compressed.write(raw.getvalue())
     print(output)
 
