@@ -16,10 +16,21 @@ MAX_DIR_ENTRIES = 500
 WEB_MODEL_PREFIX = "chatgpt-web/"
 
 
+def _web_required_prefix(config):
+    """v1 selects exact isolated Native models; un-migrated clients keep old aliases."""
+    mode = config.get("web_model_policy", "legacy-prefixed")
+    if mode == "native":
+        return None
+    if mode == "legacy-prefixed":
+        return WEB_MODEL_PREFIX
+    raise Fault(503, "Invalid Native Codex model policy")
+
+
 def _native_web_catalog(config):
+    prefix = _web_required_prefix(config)
     try:
         catalog = codex_list_models(
-            config, required_prefix=WEB_MODEL_PREFIX, native_isolated=True,
+            config, required_prefix=prefix, native_isolated=True,
         )
     except (ModelSelectionError, OSError, RuntimeError) as exc:
         raise Fault(503, "Native Codex Web model catalog is unavailable") from exc
@@ -28,11 +39,18 @@ def _native_web_catalog(config):
         if not isinstance(item, dict):
             continue
         model_id = item.get("id")
-        if (not isinstance(model_id, str) or not model_id.startswith(WEB_MODEL_PREFIX)
-                or not model_id[len(WEB_MODEL_PREFIX):].strip()):
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        if prefix is not None and not model_id.startswith(prefix):
             continue
         if item.get("model") != model_id:
-            raise Fault(503, "Native Codex Web model identity is inconsistent")
+            # A display alias is never sufficient evidence of an executable ID.
+            raise Fault(503, "Native Codex model identity is inconsistent")
+        if prefix is None:
+            efforts = item.get("supported_reasoning_efforts", [])
+            default = item.get("default_reasoning_effort")
+            if not isinstance(efforts, list) or not efforts or default not in efforts:
+                continue
         models.append(item)
     return catalog, models
 
@@ -98,7 +116,7 @@ def list_models(config):
             key: value for key, value in catalog.items() if key != "models"
         } | {
             "native_codex_owns_inference": True,
-            "route_prefix": "chatgpt-web/",
+            "route_prefix": _web_required_prefix(config),
             "supported_models": [item["id"] for item in models],
             "resolved_default_model": resolved_default,
             "models": models,
@@ -119,7 +137,7 @@ def _web_model_snapshot(config, requested):
     _, models = _native_web_catalog(config)
     selected_id = requested
     source = "requested"
-    if selected_id in (None, "chatgpt-web"):
+    if selected_id is None or (_web_required_prefix(config) is not None and selected_id == "chatgpt-web"):
         configured = config.get("chatgpt_web_default_model")
         if isinstance(configured, str) and any(item["id"] == configured for item in models):
             selected_id = configured
@@ -131,11 +149,13 @@ def _web_model_snapshot(config, requested):
         selected = _select_model(
             models,
             selected_id,
-            required_prefix=WEB_MODEL_PREFIX,
+            required_prefix=_web_required_prefix(config),
             reasoning_effort=config.get("chatgpt_web_reasoning_effort"),
         )
     except ModelSelectionError as exc:
         raise Fault(400, "Requested exact ChatGPT Web model is unavailable or invalid") from exc
+    if _web_required_prefix(config) is None and selected["reasoning_effort"] not in selected["supported_reasoning_efforts"]:
+        raise Fault(400, "Selected Native Codex reasoning effort is not supported")
     selected["source"] = source if source != "requested" else selected["source"]
     selected["catalog_source"] = "model/list"
     return selected

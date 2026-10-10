@@ -562,25 +562,42 @@ def _web_model(config, app, requested=None):
         models = _model_catalog(app)
     except ModelSelectionError as exc:
         raise Fault(503, "Native Codex Web model catalog is unavailable") from exc
+    mode = config.get("web_model_policy", "legacy-prefixed")
+    if mode not in ("native", "legacy-prefixed"):
+        raise Fault(503, "Invalid Native Codex model policy")
+    required_prefix = None if mode == "native" else WEB_MODEL_PREFIX
+    # For native mode, exclude non-executable aliases and incomplete efforts.
+    if mode == "native":
+        models = [
+            item for item in models
+            if item.get("model") == item.get("id")
+            and isinstance(item.get("id"), str) and item["id"]
+            and isinstance(item.get("supportedReasoningEfforts"), list)
+            and any(isinstance(v, dict) and v.get("reasoningEffort") == item.get("defaultReasoningEffort")
+                    for v in item["supportedReasoningEfforts"])
+        ]
     configured_default = config.get("chatgpt_web_default_model")
     if not isinstance(configured_default, str) or not any(
         isinstance(item.get("id"), str)
         and item["id"] == configured_default
-        and item["id"].startswith(WEB_MODEL_PREFIX)
+        and (required_prefix is None or item["id"].startswith(required_prefix))
         and item["model"] == item["id"]
         for item in models
     ):
         configured_default = None
     try:
-        return _select_model(
+        selected = _select_model(
             models,
             requested,
-            required_prefix=WEB_MODEL_PREFIX,
+            required_prefix=required_prefix,
             default_model=configured_default,
             reasoning_effort=config.get("chatgpt_web_reasoning_effort"),
         )
+        if mode == "native" and selected["reasoning_effort"] not in selected["supported_reasoning_efforts"]:
+            raise ModelSelectionError("Native effort is not supported")
+        return selected
     except ModelSelectionError as exc:
-        raise Fault(400, "Exact Native Codex Web model or reasoning effort is unavailable") from exc
+        raise Fault(400, "Exact Native Codex model or reasoning effort is unavailable") from exc
 
 
 def _thread(app, thread_id, include_turns=True):

@@ -377,9 +377,11 @@ def run_task(config, store, job, stop=None):
             raise ModelSelectionError("Task execution backend is invalid")
         if dispatch_origin == "web":
             snapshot = payload.get("selected_model")
+            native_v1 = config.get("web_model_policy") == "native"
             if (not isinstance(snapshot, dict)
                     or not isinstance(snapshot.get("id"), str)
-                    or not snapshot["id"].startswith("chatgpt-web/")
+                    or not snapshot["id"]
+                    or (not native_v1 and not snapshot["id"].startswith("chatgpt-web/"))
                     or snapshot.get("model") != snapshot["id"]):
                 raise ModelSelectionError("Web task has no validated Native Codex model selection")
             selected_model = dict(snapshot)
@@ -401,10 +403,13 @@ def run_task(config, store, job, stop=None):
             runtime_model = _select_model(
                 _model_catalog(app),
                 selected_model["id"],
-                required_prefix="chatgpt-web/",
+                required_prefix=None if config.get("web_model_policy") == "native" else "chatgpt-web/",
                 reasoning_effort=selected_model.get("reasoning_effort"),
             )
-            if runtime_model["model"] != selected_model["model"]:
+            if (runtime_model["model"] != selected_model["model"]
+                    or (config.get("web_model_policy") == "native"
+                        and (runtime_model["id"] != runtime_model["model"]
+                             or runtime_model["reasoning_effort"] not in runtime_model["supported_reasoning_efforts"]))):
                 raise ModelSelectionError("Web model no longer matches the Native Codex catalog")
             selected_model["reasoning_effort"] = runtime_model.get("reasoning_effort")
             selected_model["default_reasoning_effort"] = runtime_model.get("default_reasoning_effort")

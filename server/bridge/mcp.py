@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass
 
 from .core import Fault, encoded
+from .policy import permitted_tool_names
 from .codex_x_app import SERVER_INFO as CODEX_X_APP_SERVER_INFO, TOOLS as CODEX_X_APP_TOOLS, call_tool as call_codex_x_app_tool
 from .service import (
     cancel_backend,
@@ -56,7 +57,7 @@ TOOLS = [
     },
     {
         "name": "codex_x_list_models",
-        "description": "Read Native Codex app-server model/list. Web dispatch exposes only exact chatgpt-web/<version> IDs whose executable model equals the ID, with Native Codex supported/default reasoning-effort metadata. Listing does not prove terminal inference or change this ChatGPT conversation model.",
+        "description": "Read Native Codex app-server model/list with exact executable models and supported reasoning efforts, filtered by configured model policy. Catalog visibility does not prove inference entitlement.",
         "inputSchema": _schema(),
         "annotations": {"readOnlyHint": True, "destructiveHint": False},
     },
@@ -95,7 +96,7 @@ TOOLS = [
                 "prompt": {"type": "string"},
                 "scope": {"type": "string", "enum": ["read-only", "workspace-write"]},
                 "request_key": {"type": "string"},
-                "model_version": {"type": "string", "description": "Exact model ID from codex_x_list_models. Web accepts only concrete chatgpt-web/<version> IDs present in Native Codex model/list and sends an effort supported by that model. Unsupported IDs or efforts fail before queue acceptance. Native Codex owns authentication and inference; completion requires exact terminal model identity without reroute."},
+                "model_version": {"type": "string", "description": "Exact model ID from codex_x_list_models. Web uses an exact executable Native model exposed under the configured model policy and its supported effort. Unsupported IDs or efforts fail before queue acceptance. Native Codex owns authentication and inference; completion requires exact terminal model identity without reroute."},
             },
             ["project_id", "prompt", "scope", "request_key"],
         ),
@@ -315,6 +316,13 @@ def handle_rpc(request, config, store, legacy_state=None, surface="codex_x"):
     resources = [] if surface == "codex_x_app" else RESOURCES
     prompts = [] if surface == "codex_x_app" else PROMPTS
 
+    # Discoverability is not mutation permission. Resolve policy separately
+    # for every RPC invocation to prevent stale tools/list from granting calls.
+    try:
+        allowed = permitted_tool_names(config, tools, catalog=(*UNIFIED_TOOLS, *CODEX_X_APP_TOOLS))
+    except Fault as exc:
+        raise RpcError(-32003, str(exc)) from exc
+
     if method == "initialize":
         requested = params.get("protocolVersion")
         selected = requested if requested in LEGACY_VERSIONS else LEGACY_VERSIONS[0]
@@ -341,10 +349,14 @@ def handle_rpc(request, config, store, legacy_state=None, surface="codex_x"):
         _validate_modern_meta(request)
 
     if method == "tools/list":
-        return request_id, _result({"tools": tools}, surface)
+        return request_id, _result({"tools": [tool for tool in tools if tool["name"] in allowed]}, surface)
     if method == "tools/call":
         name = params.get("name")
         args = params["arguments"] if "arguments" in params else {}
+        if name not in {item["name"] for item in tools}:
+            return request_id, _tool_result({"error": {"status": 404, "message": "Unknown tool"}}, True, surface)
+        if name not in allowed:
+            return request_id, _tool_result({"error": {"status": 403, "message": "MCP tool not permitted"}}, True, surface)
         if not isinstance(args, dict):
             raise RpcError(-32602, "Tool arguments must be an object")
         try:
@@ -358,14 +370,20 @@ def handle_rpc(request, config, store, legacy_state=None, surface="codex_x"):
         except Fault as exc:
             return request_id, _tool_result({"error": {"status": exc.status, "message": str(exc)}}, True, surface)
     if method == "resources/list":
-        return request_id, _result({"resources": resources}, surface)
+        required = {"codex-x://status": "codex_x_status", "codex-x://projects": "codex_x_list_projects"}
+        visible = [item for item in resources if required.get(item["uri"]) in allowed]
+        return request_id, _result({"resources": visible}, surface)
     if method == "resources/read":
         if surface == "codex_x_app":
             raise RpcError(-32602, "Unknown resource")
         uri = params.get("uri")
         if uri == "codex-x://status":
+            if "codex_x_status" not in allowed:
+                raise RpcError(-32003, "MCP resource not permitted")
             value = status(config, store)
         elif uri == "codex-x://projects":
+            if "codex_x_list_projects" not in allowed:
+                raise RpcError(-32003, "MCP resource not permitted")
             value = list_projects(config)
         else:
             raise RpcError(-32602, "Unknown resource")

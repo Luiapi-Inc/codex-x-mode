@@ -40,6 +40,14 @@ def main():
     export = commands.add_parser("schema")
     export.add_argument("--url", required=True)
     export.add_argument("--output", default="openapi.json")
+    commands.add_parser("config-show", help="Inspect redacted configuration and revision")
+    preview = commands.add_parser("config-preview", help="Validate a local JSON patch without saving")
+    preview.add_argument("--changes", required=True, help="Path to JSON object with changed top-level keys")
+    preview.add_argument("--expected-revision", required=True)
+    apply = commands.add_parser("config-apply", help="Apply a validated offline configuration revision")
+    apply.add_argument("--changes", required=True)
+    apply.add_argument("--expected-revision", required=True)
+    apply.add_argument("--confirm", action="store_true", help="Explicitly authorize offline config mutation")
     key = commands.add_parser("show-key")
     key.add_argument("role", choices=["gpt", "provider", "mcp"])
     codex = commands.add_parser("codex")
@@ -60,6 +68,9 @@ def main():
                   "mcp_key": secrets.token_urlsafe(32),
                   "projects": {args.project: {"cwd": str(cwd), "allow_write": args.allow_write}},
                   "codex_command": ["codex"], "backend_timeout_seconds": 600, "task_timeout_seconds": 600,
+                  "config_schema_version": 1,
+                  "mcp_policy": {"mode": "read-only"},
+                  "web_model_policy": "native",
                   }
         if args.model_version is not None:
             config["chatgpt_web_default_model"] = args.model_version
@@ -81,6 +92,38 @@ def main():
         parser.error("Use distinct GPT and provider keys")
     if isinstance(config.get("mcp_key"), str) and config["mcp_key"] in (config["gpt_key"], config["provider_key"]):
         parser.error("Use a distinct MCP key")
+    if args.command in ("config-show", "config-preview", "config-apply"):
+        from .config_kernel import ConfigKernel, ConfigFault
+
+        kernel = ConfigKernel(config_path)
+        try:
+            if args.command == "config-show":
+                result = kernel.snapshot()
+            else:
+                patch = Path(args.changes)
+                if not patch.is_file() or patch.stat().st_size > 65536:
+                    parser.error("Changes must be a local JSON file up to 64 KiB")
+                changes = json.loads(patch.read_text())
+                if args.command == "config-preview":
+                    result = kernel.preview(changes, expected_revision=args.expected_revision)
+                else:
+                    if not args.confirm:
+                        parser.error("Config apply requires explicit --confirm")
+                    # Never change disk configuration while the resident
+                    # runtime owns its private config lock.
+                    runtime_lock = config_path.with_suffix(".lock").open("a")
+                    try:
+                        try:
+                            fcntl.flock(runtime_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            parser.error("Running bridge holds config; stop it before offline apply")
+                        result = kernel.apply(changes, expected_revision=args.expected_revision)
+                    finally:
+                        runtime_lock.close()
+        except (ConfigFault, OSError, ValueError) as exc:
+            parser.error("Configuration operation rejected: " + str(exc))
+        print(json.dumps(result, sort_keys=True))
+        return
     if args.command == "show-key":
         value = config.get(args.role + "_key")
         if not isinstance(value, str) or len(value) < 32:

@@ -3,7 +3,7 @@ name: Codex X Mode verification
 on:
   push:
     branches:
-      - feat/xmode-v1-mcp-gateway-pr
+      - main
   pull_request:
     branches:
       - main
