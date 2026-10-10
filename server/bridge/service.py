@@ -5,13 +5,36 @@ import secrets
 import stat
 from pathlib import Path
 
-from .codex import list_models as codex_list_models
+from .codex import ModelSelectionError, _select_model, list_models as codex_list_models
 from .core import Fault, encoded, fields, project_config, text
-from . import siwc
 
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_DIR_ENTRIES = 500
+
+
+WEB_MODEL_PREFIX = "chatgpt-web/"
+
+
+def _native_web_catalog(config):
+    try:
+        catalog = codex_list_models(
+            config, required_prefix=WEB_MODEL_PREFIX, native_isolated=True,
+        )
+    except (ModelSelectionError, OSError, RuntimeError) as exc:
+        raise Fault(503, "Native Codex Web model catalog is unavailable") from exc
+    models = []
+    for item in catalog.get("models", []):
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        if (not isinstance(model_id, str) or not model_id.startswith(WEB_MODEL_PREFIX)
+                or not model_id[len(WEB_MODEL_PREFIX):].strip()):
+            continue
+        if item.get("model") != model_id:
+            raise Fault(503, "Native Codex Web model identity is inconsistent")
+        models.append(item)
+    return catalog, models
 
 
 def public_job(job):
@@ -27,9 +50,10 @@ def status(config, store):
         "projects": len(config.get("projects", {})),
         "unknown_projects": unknown,
         "unknown_tasks": store.unknown_tasks() if hasattr(store, "unknown_tasks") else [],
+        "unknown_app_writers": store.unknown_app_writers() if hasattr(store, "unknown_app_writers") else [],
         "readiness": {
             "mcp_transport": "available",
-            "codex_runtime": "unverified",
+            "codex_runtime": "implemented_unverified",
             "web_executor": "implemented_unverified",
             "model_identity": "unverified",
             "end_to_end": "unverified",
@@ -39,7 +63,9 @@ def status(config, store):
             "web_http": "codex_app_server",
         },
         "web_model_family": "chatgpt-web",
-        "chatgpt_plan_authorization": {"state": "not_required"},
+        "web_browser_required": False,
+        "native_codex_owns_inference": True,
+        "chatgpt_web_authorization": {"state": "native_codex_owned"},
         "capabilities": {
             "backend": ["claim", "context", "complete", "cancel"],
             "dispatch": ["models", "create", "read", "continue", "cancel"],
@@ -59,47 +85,59 @@ def list_projects(config):
 
 
 def list_models(config):
-    prefix = "chatgpt-web/" if _origin(config) == "web" else None
-    try:
-        return codex_list_models(config, required_prefix=prefix)
-    except (OSError, RuntimeError) as exc:
-        raise Fault(503, "Codex model catalog is unavailable") from exc
+    if _origin(config) == "web":
+        catalog, models = _native_web_catalog(config)
+        ids = {item["id"] for item in models}
+        configured_default = config.get("chatgpt_web_default_model")
+        resolved_default = configured_default if configured_default in ids else None
+        if resolved_default is None:
+            defaults = [item["id"] for item in models if item.get("is_default") is True]
+            if len(defaults) == 1:
+                resolved_default = defaults[0]
+        return {
+            key: value for key, value in catalog.items() if key != "models"
+        } | {
+            "native_codex_owns_inference": True,
+            "route_prefix": "chatgpt-web/",
+            "supported_models": [item["id"] for item in models],
+            "resolved_default_model": resolved_default,
+            "models": models,
+        }
+    return codex_list_models(config)
 
 
 def _origin(config):
     return "web" if config.get("_dispatch_origin") == "web" else "local"
 
 def _backend(config):
+    # All new dispatch, including Web-origin work, executes through Native Codex.
+    # Legacy custom-provider backends remain only on already-persisted tasks.
     return "codex_app_server"
 
 
 def _web_model_snapshot(config, requested):
-    try:
-        catalog = codex_list_models(config, required_prefix="chatgpt-web/")
-    except (OSError, RuntimeError) as exc:
-        raise Fault(503, "Codex Web model catalog is unavailable") from exc
-    models = catalog.get("models", [])
+    _, models = _native_web_catalog(config)
     selected_id = requested
     source = "requested"
     if selected_id in (None, "chatgpt-web"):
-        selected_id = config.get("chatgpt_web_default_model")
-        source = "configured_default"
-        if not isinstance(selected_id, str) or not selected_id:
-            raise Fault(400, "Web dispatch requires an exact model_version or chatgpt_web_default_model")
-    matches = [item for item in models if item.get("id") == selected_id]
-    if len(matches) != 1:
-        raise Fault(400, "Requested Web model is unavailable to Native Codex")
-    selected = dict(matches[0])
-    supported = selected.get("supported_reasoning_efforts") or []
-    effort = config.get("chatgpt_web_reasoning_effort") or selected.get("default_reasoning_effort")
-    if effort is None and len(supported) == 1:
-        effort = supported[0]
-    if not isinstance(effort, str) or not effort:
-        raise Fault(400, "Selected Web model has no unambiguous reasoning effort")
-    if supported and effort not in supported:
-        raise Fault(400, "Selected Web model does not support the configured reasoning effort")
-    selected["reasoning_effort"] = effort
-    selected["source"] = source
+        configured = config.get("chatgpt_web_default_model")
+        if isinstance(configured, str) and any(item["id"] == configured for item in models):
+            selected_id = configured
+            source = "configured_default"
+        else:
+            selected_id = None
+            source = "account_default"
+    try:
+        selected = _select_model(
+            models,
+            selected_id,
+            required_prefix=WEB_MODEL_PREFIX,
+            reasoning_effort=config.get("chatgpt_web_reasoning_effort"),
+        )
+    except ModelSelectionError as exc:
+        raise Fault(400, "Requested exact ChatGPT Web model is unavailable or invalid") from exc
+    selected["source"] = source if source != "requested" else selected["source"]
+    selected["catalog_source"] = "model/list"
     return selected
 
 
@@ -125,8 +163,8 @@ def _accept_task(config, store, payload, request_key):
         raise Fault(409, "Follow-up cannot change the parent dispatch origin")
     payload["dispatch_origin"] = current_origin
     payload["execution_backend"] = _backend(config)
-    # Serialize acceptance around model selection so concurrent duplicates never
-    # observe different catalog snapshots or create two jobs.
+    # Serialize acceptance around Native Codex model selection so concurrent
+    # duplicates never observe different snapshots or create two jobs.
     with store.lock:
         prior = _retry_task(store, request_key, payload)
         if prior is not None:
@@ -385,10 +423,10 @@ def continue_task(config, store, task_id, body):
         raise Fault(409, "Follow-up cannot change the parent execution backend")
     parent_origin = parent["payload"].get("dispatch_origin")
     if parent_origin is None:
-        parent_origin = "web" if parent_backend == "chatgpt_plan" else "local"
+        parent_origin = "local"
     if parent_origin != _origin(config):
         raise Fault(409, "Follow-up cannot change the parent dispatch origin")
-    payload = {key: value for key, value in parent["payload"].items() if key not in ("selected_model", "siwc_registration", "execution_backend")}
+    payload = {key: value for key, value in parent["payload"].items() if key not in ("selected_model", "execution_backend")}
     # Preserve the actual selected model for a follow-up, including a configured
     # default used by a parent whose original request omitted model_version.
     if parent["payload"].get("selected_model"):

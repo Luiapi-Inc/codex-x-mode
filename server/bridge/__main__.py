@@ -5,7 +5,6 @@ import secrets
 import subprocess
 import threading
 import fcntl
-import uuid
 from pathlib import Path
 
 from .core import Store
@@ -13,7 +12,6 @@ from .http import Server
 from .mcp import serve_stdio
 from .codex import worker
 from .schema import dump
-from . import siwc
 
 
 def default_config_path():
@@ -34,10 +32,11 @@ def main():
     setup.add_argument("--project", required=True)
     setup.add_argument("--cwd", required=True)
     setup.add_argument("--allow-write", action="store_true")
-    setup.add_argument("--model-version", help="Exact ChatGPT plan model slug to use when a web request omits model_version")
+    setup.add_argument("--model-version", help="Preferred exact chatgpt-web/<version> ID from Native Codex model/list")
     serve = commands.add_parser("serve")
     serve.add_argument("--port", type=int, default=8240)
     commands.add_parser("mcp-stdio")
+    commands.add_parser("codex-x-app-mcp-stdio")
     export = commands.add_parser("schema")
     export.add_argument("--url", required=True)
     export.add_argument("--output", default="openapi.json")
@@ -46,11 +45,6 @@ def main():
     codex = commands.add_parser("codex")
     codex.add_argument("--port", type=int, default=8240)
     codex.add_argument("args", nargs=argparse.REMAINDER)
-    commands.add_parser("siwc-login")
-    commands.add_parser("siwc-status")
-    commands.add_parser("siwc-host-id")
-    siwc_import = commands.add_parser("siwc-import")
-    siwc_import.add_argument("--file", required=True, help="Protected mode-600 credential file transferred securely from the same tool/account")
     args = parser.parse_args()
     os.umask(0o077)
     config_path = Path(args.config).resolve()
@@ -66,10 +60,9 @@ def main():
                   "mcp_key": secrets.token_urlsafe(32),
                   "projects": {args.project: {"cwd": str(cwd), "allow_write": args.allow_write}},
                   "codex_command": ["codex"], "backend_timeout_seconds": 600, "task_timeout_seconds": 600,
-                  "ext_agent_host_id": "urn:uuid:" + str(uuid.uuid4()),
-                  "siwc_credentials_file": str(config_path.with_suffix(".siwc.json"))}
+                  }
         if args.model_version is not None:
-            config["chatgpt_plan_default_model"] = args.model_version
+            config["chatgpt_web_default_model"] = args.model_version
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with config_path.open("x") as output:
             json.dump(config, output, indent=2)
@@ -88,19 +81,6 @@ def main():
         parser.error("Use distinct GPT and provider keys")
     if isinstance(config.get("mcp_key"), str) and config["mcp_key"] in (config["gpt_key"], config["provider_key"]):
         parser.error("Use a distinct MCP key")
-    if args.command.startswith("siwc-"):
-        try:
-            if args.command == "siwc-login":
-                siwc.login(config)
-            elif args.command == "siwc-import":
-                print(json.dumps(siwc.import_credentials(config, args.file)))
-            elif args.command == "siwc-host-id":
-                print(siwc._write_host_id(config))
-            else:
-                print(json.dumps(siwc.authorization_status(config)))
-        except (siwc.SiwcError, OSError) as exc:
-            parser.error(str(exc) if isinstance(exc, siwc.SiwcError) else "Protected credential operation failed")
-        return
     if args.command == "show-key":
         value = config.get(args.role + "_key")
         if not isinstance(value, str) or len(value) < 32:
@@ -108,18 +88,13 @@ def main():
         print(value)
         return
     if args.command == "codex":
-        env = dict(os.environ, CODEX_BRIDGE_PROVIDER_KEY=config["provider_key"])
+        # Native Codex owns authentication, catalog selection, and inference.
+        # This wrapper must never turn Codex X Mode into a custom Responses provider.
         extra = args.args[1:] if args.args[:1] == ["--"] else args.args
-        command = config["codex_command"] + [
-            "-c", 'model_provider="custom_gpt_bridge"',
-            "-c", 'model_providers.custom_gpt_bridge.name="Custom GPT Bridge"',
-            "-c", 'model_providers.custom_gpt_bridge.wire_api="responses"',
-            "-c", f'model_providers.custom_gpt_bridge.base_url="http://127.0.0.1:{args.port}/v1"',
-            "-c", 'model_providers.custom_gpt_bridge.env_key="CODEX_BRIDGE_PROVIDER_KEY"',
-            "-c", 'model_providers.custom_gpt_bridge.supports_websockets=false',
-            "-c", 'model_providers.custom_gpt_bridge.request_max_retries=0',
-            "-c", 'model_providers.custom_gpt_bridge.stream_max_retries=0',
-            *extra]
+        command = config["codex_command"] + ["-c", 'model_provider="openai"', *extra]
+        env = dict(os.environ)
+        for key in ("CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN", "OPENAI_API_KEY", "OPENAI_BASE_URL"):
+            env.pop(key, None)
         raise SystemExit(subprocess.call(command, env=env))
     lock_file = config_path.with_suffix(".lock").open("a")
     try:
@@ -127,7 +102,14 @@ def main():
     except BlockingIOError:
         parser.error("This configuration already has a running bridge")
     store = Store(config_path.with_suffix(".sqlite3"))
-    if args.command == "mcp-stdio":
+    if args.command in ("mcp-stdio", "codex-x-app-mcp-stdio"):
+        if args.command == "codex-x-app-mcp-stdio":
+            try:
+                serve_stdio(config, store, surface="codex_x_app")
+            finally:
+                store.close()
+                lock_file.close()
+            return
         stop = threading.Event()
         thread = threading.Thread(target=worker, args=(config, store, stop), daemon=True)
         thread.start()

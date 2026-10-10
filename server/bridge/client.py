@@ -202,7 +202,7 @@ def main(argv=None):
     import argparse
     import sys
     parser = argparse.ArgumentParser(description="Read-only MCP transport readiness check")
-    parser.add_argument("--url", help="Exact HTTPS /mcp endpoint, or loopback HTTP")
+    parser.add_argument("--url", help="Exact HTTPS MCP endpoint (canonical /mode/mcp), or loopback HTTP")
     parser.add_argument("--config", help="Private local configuration for bundled stdio server")
     parser.add_argument("--token-env", default="CODEX_X_MCP_TOKEN")
     parser.add_argument("--protocol", choices=SUPPORTED_VERSIONS, default="2025-11-25")

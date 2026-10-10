@@ -10,7 +10,7 @@ Portable package: `mcp.json`. Local server: `python3 -m bridge mcp-stdio` with c
 | --- | --- | --- |
 | `codex_x_status` | Status and unknown-project blockers | No |
 | `codex_x_list_projects` | Configured project IDs/write flags | No |
-| `codex_x_list_models` | Active backend model catalog for exact dispatch selection | No |
+| `codex_x_list_models` | Native Codex model catalog and exact Web model IDs | No |
 | `codex_x_list_project_directory` | Safe project-relative directory listing | No |
 | `codex_x_read_project_file` | Safe UTF-8 file read | No |
 | `codex_x_create_task` | Create authorized task | Yes |
@@ -26,24 +26,34 @@ Resources: `codex-x://status`, `codex-x://projects`. Prompts: `codex-x-backend`,
 
 ## Dispatch model selection boundary
 
-`codex_x_list_models` uses Codex app-server's `model/list` on local stdio.
-HTTP MCP and `GET /models` use the signed-in account's OAuth token to read
-`https://api.openai.com/v1/models`, preserving listed-model ordering.
-The catalog does not establish account entitlement and
-does not control the model of the ChatGPT Web conversation invoking the bridge.
-`model_version`, when supplied, is an exact ID for Codex dispatch. Unsupported
-IDs and an ambiguous default fail before thread/turn start. The bridge records
-the requested model and accepts a completed model identity only when the
-terminal event reports that exact model without reroute. An absent/mismatched
-identity leaves the execution `unknown`; it is not retried automatically.
+Web-origin and local dispatch use Native Codex app-server `model/list`.
+Web-origin discovery exposes only exact `chatgpt-web/<version>` IDs whose
+executable model equals the ID. A concrete version must follow the family
+prefix; family-only IDs and unlisted models fail before queue acceptance.
+Web reasoning effort must be present in the selected model's supported-effort
+metadata and is sent explicitly. When model selection is omitted, the bridge
+uses a valid configured exact Web default or a unique Native Codex account
+default; it never falls back to another provider. Catalog listing does not
+prove entitlement or control the ChatGPT conversation's model.
 
-HTTP-origin tasks require SIWC authorization, granted plan scopes and an exact
-selected/configured model before queue acceptance. The server routes them to
-`chatgpt_plan`; local stdio routes to `codex_app_server`. Clients cannot choose
-the backend. Retries verify original input and recover the existing task before
-reading credentials or a changed catalog. Follow-ups retain the backend,
-registration and selected model. Workers revalidate account/catalog before
-child launch; legacy HTTP tasks with unknown origin are not executed.
+Web-originated Codex X App operations that start a turn apply the same exact
+model contract. New threads and forks that start a turn resolve their
+requested/default or parent model against Native Codex `model/list`, then send
+the exact ID and supported effort.
+Messages to an existing thread require that thread's model to remain an exact
+listed Web model; idle turns send the ID and effort explicitly, while steering
+is allowed only when the thread's current effort matches the selected supported
+effort. Missing or mismatched effort fails closed because Native
+`turn/steer` cannot change model or effort. Local stdio App calls retain local
+Native Codex model behavior.
+
+The bridge records requested and selected model identity. A completed task is
+accepted only when the terminal event reports that exact model without reroute.
+An absent/mismatched identity leaves execution `unknown`; it is not retried
+automatically. Backend and origin are fixed by the gateway. Retries recover the
+original task before catalog refresh; follow-ups retain the parent's selection.
+Persisted jobs naming retired `chatgpt_plan` or `chatgpt_web_headless` routes
+fail before provider launch and must not be replayed through another route.
 Status reports `readiness.web_executor = "implemented_unverified"` and keeps
 live model/end-to-end verification unverified. Source tests use named fixtures.
 
@@ -84,7 +94,7 @@ Cancellation: queued → `cancelled`; running → `cancelling` and owned process
 
 ## HTTP bridge
 
-`python3 -m bridge serve` binds loopback by default. `/mcp` is authenticated modern MCP. `/status`, `/projects`, project reads, `/tasks...`, `/backend...` are GPT Actions. `/v1/...` is the private local Responses provider and must not be exposed via public reverse proxy.
+`python3 -m bridge serve` binds loopback by default. `/mode/mcp` is the canonical authenticated unified MCP endpoint with 13 Core + 8 namespaced App tools. `/mcp` and `/app/mcp` remain authenticated compatibility endpoints. `/status`, `/projects`, project reads and `/tasks...` are GPT Actions. `/v1/...` is the private local Responses provider and must not be exposed via public reverse proxy.
 
 A public web/mobile integration requires a user-controlled HTTPS deployment and explicit endpoint binding. No public URL is invented or embedded.
 

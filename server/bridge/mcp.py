@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass
 
 from .core import Fault, encoded
+from .codex_x_app import SERVER_INFO as CODEX_X_APP_SERVER_INFO, TOOLS as CODEX_X_APP_TOOLS, call_tool as call_codex_x_app_tool
 from .service import (
     cancel_backend,
     cancel_task,
@@ -26,8 +27,9 @@ LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 SUPPORTED_VERSIONS = (MODERN_VERSION, *LEGACY_VERSIONS)
 
 
-def _meta():
-    return {"io.modelcontextprotocol/serverInfo": SERVER_INFO}
+def _meta(surface="codex_x"):
+    server_info = CODEX_X_APP_SERVER_INFO if surface == "codex_x_app" else SERVER_INFO
+    return {"io.modelcontextprotocol/serverInfo": server_info}
 
 
 def _schema(properties=None, required=None, additional=False):
@@ -54,7 +56,7 @@ TOOLS = [
     },
     {
         "name": "codex_x_list_models",
-        "description": "Read the active backend model catalog: HTTP uses token-scoped ChatGPT-plan listed models; local stdio uses Codex app-server model/list. Select an exact model_version; listing does not prove inference entitlement or change this ChatGPT conversation model.",
+        "description": "Read Native Codex app-server model/list. Web dispatch exposes only exact chatgpt-web/<version> IDs whose executable model equals the ID, with Native Codex supported/default reasoning-effort metadata. Listing does not prove terminal inference or change this ChatGPT conversation model.",
         "inputSchema": _schema(),
         "annotations": {"readOnlyHint": True, "destructiveHint": False},
     },
@@ -93,7 +95,7 @@ TOOLS = [
                 "prompt": {"type": "string"},
                 "scope": {"type": "string", "enum": ["read-only", "workspace-write"]},
                 "request_key": {"type": "string"},
-                "model_version": {"type": "string", "description": "Exact active-backend model ID from codex_x_list_models. Web omission requires a configured exact default and valid SIWC authorization; unsupported IDs fail before queue acceptance. Local stdio retains the app-server default. The current conversation model is unchanged; completed execution needs exact terminal model identity without reroute."},
+                "model_version": {"type": "string", "description": "Exact model ID from codex_x_list_models. Web accepts only concrete chatgpt-web/<version> IDs present in Native Codex model/list and sends an effort supported by that model. Unsupported IDs or efforts fail before queue acceptance. Native Codex owns authentication and inference; completion requires exact terminal model identity without reroute."},
             },
             ["project_id", "prompt", "scope", "request_key"],
         ),
@@ -110,7 +112,7 @@ TOOLS = [
         "description": "Send an explicitly authorized follow-up to a completed task; project and scope cannot broaden.",
         "inputSchema": _schema(
             {"task_id": {"type": "string"}, "prompt": {"type": "string"}, "request_key": {"type": "string"},
-             "model_version": {"type": "string", "description": "Optional exact active-backend model ID; omission retains the parent selected dispatch model. Backend and account registration cannot change. This does not change the current ChatGPT conversation model."}},
+             "model_version": {"type": "string", "description": "Optional exact Native Codex model ID; omission retains the parent selected dispatch model. Backend and dispatch origin cannot change. This does not change the current ChatGPT conversation model."}},
             ["task_id", "prompt", "request_key"],
         ),
         "annotations": {"readOnlyHint": False, "destructiveHint": False},
@@ -171,6 +173,19 @@ TOOLS = [
 
 TOOL_MAP = {tool["name"]: tool for tool in TOOLS}
 
+# v1: preserve Core names, namespace App tools to prevent collisions.
+# Keep original App MCP surface intact for existing clients.
+UNIFIED_APP_PREFIX = "codex_x_app_"
+UNIFIED_APP_TOOL_MAP = {
+    UNIFIED_APP_PREFIX + tool["name"]: tool["name"] for tool in CODEX_X_APP_TOOLS
+}
+UNIFIED_TOOLS = [*TOOLS, *(
+    {**tool, "name": UNIFIED_APP_PREFIX + tool["name"]}
+    for tool in CODEX_X_APP_TOOLS
+)]
+if len({tool["name"] for tool in UNIFIED_TOOLS}) != len(UNIFIED_TOOLS):
+    raise RuntimeError("Unified MCP tool registry contains duplicate names")
+
 RESOURCES = [
     {"uri": "codex-x://status", "name": "Codex X Mode status", "description": "Current bridge capabilities and blocked projects", "mimeType": "application/json"},
     {"uri": "codex-x://projects", "name": "Codex X Mode projects", "description": "Configured project IDs and write permissions", "mimeType": "application/json"},
@@ -193,9 +208,9 @@ PROMPTS = [
 ]
 
 
-def _tool_result(value, is_error=False):
+def _tool_result(value, is_error=False, surface="codex_x"):
     body = encoded(value)
-    result = {"content": [{"type": "text", "text": body}], "structuredContent": value, "_meta": _meta()}
+    result = {"content": [{"type": "text", "text": body}], "structuredContent": value, "_meta": _meta(surface)}
     if is_error:
         result["isError"] = True
     return result
@@ -241,6 +256,17 @@ def _call_tool(name, args, config, store):
     raise Fault(404, "Unknown tool")
 
 
+def _call_unified_tool(name, args, config, store):
+    if name in TOOL_MAP:
+        return _call_tool(name, args, config, store)
+    original = UNIFIED_APP_TOOL_MAP.get(name)
+    if original is None:
+        raise Fault(404, "Unknown tool")
+    if not isinstance(args, dict):
+        raise Fault(400, "Tool arguments must be an object")
+    return call_codex_x_app_tool(original, args, config, store)
+
+
 def _validate_modern_meta(request):
     params = request.get("params") or {}
     if not isinstance(params, dict):
@@ -265,14 +291,16 @@ class RpcError(Exception):
         self.data = data
 
 
-def _result(value):
+def _result(value, surface="codex_x"):
     if isinstance(value, dict):
         value = dict(value)
-        value.setdefault("_meta", _meta())
+        value.setdefault("_meta", _meta(surface))
     return value
 
 
-def handle_rpc(request, config, store, legacy_state=None):
+def handle_rpc(request, config, store, legacy_state=None, surface="codex_x"):
+    if surface not in ("codex_x", "codex_x_app", "unified"):
+        raise RpcError(-32602, "Unknown MCP surface")
     if not isinstance(request, dict) or request.get("jsonrpc") != "2.0" or "method" not in request:
         raise RpcError(-32600, "Invalid Request")
     method = request["method"]
@@ -280,6 +308,12 @@ def handle_rpc(request, config, store, legacy_state=None):
     params = request.get("params") or {}
     if not isinstance(params, dict):
         raise RpcError(-32602, "Invalid params")
+
+    server_info = CODEX_X_APP_SERVER_INFO if surface == "codex_x_app" else SERVER_INFO
+    tools = (UNIFIED_TOOLS if surface == "unified"
+             else CODEX_X_APP_TOOLS if surface == "codex_x_app" else TOOLS)
+    resources = [] if surface == "codex_x_app" else RESOURCES
+    prompts = [] if surface == "codex_x_app" else PROMPTS
 
     if method == "initialize":
         requested = params.get("protocolVersion")
@@ -289,7 +323,7 @@ def handle_rpc(request, config, store, legacy_state=None):
         return request_id, {
             "protocolVersion": selected,
             "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
-            "serverInfo": SERVER_INFO,
+            "serverInfo": server_info,
         }
     if method == "notifications/initialized":
         return None, None
@@ -301,24 +335,33 @@ def handle_rpc(request, config, store, legacy_state=None):
         }
     if method == "ping":
         _validate_modern_meta(request)
-        return request_id, _result({})
+        return request_id, _result({}, surface)
 
     if not legacy_state or not legacy_state.get("version"):
         _validate_modern_meta(request)
 
     if method == "tools/list":
-        return request_id, _result({"tools": TOOLS})
+        return request_id, _result({"tools": tools}, surface)
     if method == "tools/call":
         name = params.get("name")
-        args = params.get("arguments") or {}
+        args = params["arguments"] if "arguments" in params else {}
+        if not isinstance(args, dict):
+            raise RpcError(-32602, "Tool arguments must be an object")
         try:
-            value = _call_tool(name, args, config, store)
-            return request_id, _tool_result(value)
+            if surface == "codex_x_app":
+                value = call_codex_x_app_tool(name, args, config, store)
+            elif surface == "unified":
+                value = _call_unified_tool(name, args, config, store)
+            else:
+                value = _call_tool(name, args, config, store)
+            return request_id, _tool_result(value, surface=surface)
         except Fault as exc:
-            return request_id, _tool_result({"error": {"status": exc.status, "message": str(exc)}}, True)
+            return request_id, _tool_result({"error": {"status": exc.status, "message": str(exc)}}, True, surface)
     if method == "resources/list":
-        return request_id, _result({"resources": RESOURCES})
+        return request_id, _result({"resources": resources}, surface)
     if method == "resources/read":
+        if surface == "codex_x_app":
+            raise RpcError(-32602, "Unknown resource")
         uri = params.get("uri")
         if uri == "codex-x://status":
             value = status(config, store)
@@ -326,10 +369,12 @@ def handle_rpc(request, config, store, legacy_state=None):
             value = list_projects(config)
         else:
             raise RpcError(-32602, "Unknown resource")
-        return request_id, _result({"contents": [{"uri": uri, "mimeType": "application/json", "text": encoded(value)}]})
+        return request_id, _result({"contents": [{"uri": uri, "mimeType": "application/json", "text": encoded(value)}]}, surface)
     if method == "prompts/list":
-        return request_id, _result({"prompts": PROMPTS})
+        return request_id, _result({"prompts": prompts}, surface)
     if method == "prompts/get":
+        if surface == "codex_x_app":
+            raise RpcError(-32602, "Unknown prompt")
         name = params.get("name")
         args = params.get("arguments") or {}
         if name == "codex-x-backend":
@@ -341,7 +386,7 @@ def handle_rpc(request, config, store, legacy_state=None):
             message = f"Use Codex X Mode Dispatch for project {project} with read-only scope. Task: {goal}. Preserve task identity and report evidence without sending unrequested follow-ups."
         else:
             raise RpcError(-32602, "Unknown prompt")
-        return request_id, _result({"description": next(p["description"] for p in PROMPTS if p["name"] == name), "messages": [{"role": "user", "content": {"type": "text", "text": message}}]})
+        return request_id, _result({"description": next(p["description"] for p in prompts if p["name"] == name), "messages": [{"role": "user", "content": {"type": "text", "text": message}}]}, surface)
     raise RpcError(-32601, "Method not found")
 
 
@@ -358,26 +403,26 @@ def _request_version(request, legacy_state=None):
     return None
 
 
-def _stamp_modern_result(method, result):
+def _stamp_modern_result(method, result, surface="codex_x"):
     if not isinstance(result, dict):
         return result
     result = dict(result)
     result.setdefault("resultType", "complete")
-    result.setdefault("_meta", _meta())
+    result.setdefault("_meta", _meta(surface))
     if method in ("tools/list", "resources/list", "resources/read", "prompts/list"):
         result.setdefault("ttlMs", 0)
         result.setdefault("cacheScope", "private")
     return result
 
 
-def rpc_response(request, config, store, legacy_state=None):
+def rpc_response(request, config, store, legacy_state=None, surface="codex_x"):
     request_id = request.get("id") if isinstance(request, dict) else None
     try:
-        response_id, result = handle_rpc(request, config, store, legacy_state)
+        response_id, result = handle_rpc(request, config, store, legacy_state, surface)
         if response_id is None:
             return None
         if _request_version(request, legacy_state) == MODERN_VERSION:
-            result = _stamp_modern_result(request.get("method"), result)
+            result = _stamp_modern_result(request.get("method"), result, surface)
         return {"jsonrpc": "2.0", "id": response_id, "result": result}
     except RpcError as exc:
         error = {"code": exc.code, "message": str(exc)}
@@ -415,7 +460,7 @@ def validate_http_version(request, header_version, method_header=None, name_head
         raise RpcError(-32020, "Unexpected Mcp-Name header")
 
 
-def serve_stdio(config, store):
+def serve_stdio(config, store, surface="codex_x"):
     config = dict(config, _dispatch_origin="local")
     state = {}
     for raw in sys.stdin:
@@ -424,7 +469,7 @@ def serve_stdio(config, store):
         except ValueError:
             response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
         else:
-            response = rpc_response(request, config, store, state)
+            response = rpc_response(request, config, store, state, surface)
         if response is not None:
             sys.stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
             sys.stdout.flush()

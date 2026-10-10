@@ -1,12 +1,15 @@
+import errno
 import json
 import os
 import queue
+import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 import threading
 import time
 
 from .core import project_config
-from . import siwc
 
 
 class TaskCancelled(Exception):
@@ -19,9 +22,16 @@ class ModelSelectionError(RuntimeError):
 
 class AppServer:
     """One owned stdio app-server process per dispatched turn."""
-    def __init__(self, command, timeout=600, stop=None, cancel=None, *, env=None):
-        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
+    def __init__(self, command, timeout=600, stop=None, cancel=None, *, env=None, cleanup=None):
+        self.cleanup = cleanup
+        try:
+            self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                            stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
+        except Exception:
+            if self.cleanup is not None:
+                self.cleanup()
+                self.cleanup = None
+            raise
         self.messages = queue.Queue(maxsize=1024)
         self.notifications = []
         self.sequence = 0
@@ -93,47 +103,117 @@ class AppServer:
                 self.notifications.append(message)
 
     def close(self):
-        import os
         import signal
-        if self.process.poll() is None:
-            os.killpg(self.process.pid, signal.SIGTERM)
+        stopped = False
+        try:
+            if self.process.poll() is None:
+                try:
+                    os.killpg(self.process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    pass
+            if self.process.poll() is None:
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if self.process.poll() is None:
+                        try:
+                            os.killpg(self.process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        self.process.wait(timeout=5)
+            stopped = self._wait_process_group_stopped(timeout=2)
+            if not stopped and self.process.poll() is None:
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    pass
+                if self.process.poll() is None:
+                    try:
+                        self.process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                stopped = self._wait_process_group_stopped(timeout=2)
+        except Exception:
+            stopped = False
+        finally:
+            for handle in (self.process.stdin, self.process.stdout):
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+            self.reader.join(timeout=2)
+        if stopped and self.cleanup is not None:
             try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.process.pid, signal.SIGKILL)
-                self.process.wait(timeout=5)
-        for handle in (self.process.stdin, self.process.stdout):
-            handle.close()
-        self.reader.join(timeout=2)
+                self.cleanup()
+                self.cleanup = None
+            except Exception:
+                pass
+        elif self.cleanup is not None:
+            owner = getattr(self.cleanup, "__self__", None)
+            finalizer = getattr(owner, "_finalizer", None)
+            if finalizer is not None and finalizer.alive:
+                finalizer.detach()
+            self.cleanup = None
+        return stopped
+
+    def _wait_process_group_stopped(self, timeout=2):
+        deadline = time.monotonic() + max(0, float(timeout))
+        while True:
+            try:
+                os.killpg(self.process.pid, 0)
+            except ProcessLookupError:
+                return True
+            except OSError as exc:
+                if exc.errno == errno.ESRCH:
+                    return True
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
 
 
-def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_app_server", credentials=None):
-    if backend == "chatgpt_plan":
-        if credentials is None:
-            raise siwc.SiwcError("ChatGPT plan authorization is required")
-        env = dict(os.environ)
-        for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN"):
-            env.pop(key, None)
-        env["ACCESS_TOKEN"] = credentials["access_token"]
-        command = config["codex_command"] + ["app-server", "--listen", "stdio://"]
-        settings = {
-            "model_provider": '"openai_chatgpt_plan"',
-            "model_providers.openai_chatgpt_plan.name": '"ChatGPT plan"',
-            "model_providers.openai_chatgpt_plan.base_url": '"https://api.openai.com/v1"',
-            "model_providers.openai_chatgpt_plan.env_key": '"ACCESS_TOKEN"',
-            "model_providers.openai_chatgpt_plan.wire_api": '"responses"',
-            "model_providers.openai_chatgpt_plan.requires_openai_auth": "false",
-            "model_providers.openai_chatgpt_plan.supports_websockets": "false",
-            "model_providers.openai_chatgpt_plan.request_max_retries": "0",
-            "model_providers.openai_chatgpt_plan.stream_max_retries": "0",
-            "shell_environment_policy": '{inherit="core",ignore_default_excludes=false,filters={ACCESS_TOKEN="exclude"},set={},experimental_use_profile=false}',
-        }
-        for key, value in settings.items():
-            command.extend(["-c", key + "=" + value])
-        return AppServer(command, timeout, stop, cancel, env=env)
+def _isolated_native_codex_env(config):
+    """Create a clean Codex home that reuses only Native Codex auth state.
+
+    Codex X Mode never reads or interprets the credential contents. The opaque
+    auth file is copied with mode 600 so user-level custom provider/catalog
+    configuration cannot influence Web execution.
+    """
+    source_home = Path(config.get("native_codex_home") or os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+    auth_source = source_home / "auth.json"
+    if not auth_source.is_file():
+        raise ModelSelectionError("Native Codex ChatGPT authentication is unavailable")
+    isolated = tempfile.TemporaryDirectory(prefix="codex-x-native-app-server-")
+    auth_target = Path(isolated.name) / "auth.json"
+    try:
+        shutil.copy2(auth_source, auth_target)
+        auth_target.chmod(0o600)
+    except Exception:
+        isolated.cleanup()
+        raise
+    env = dict(os.environ)
+    for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN"):
+        env.pop(key, None)
+    env["CODEX_HOME"] = isolated.name
+    return env, isolated.cleanup
+
+
+def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_app_server", native_isolated=False):
     if backend != "codex_app_server":
         raise ModelSelectionError("Task execution backend is invalid")
-    command = config["codex_command"] + ["-c", 'model_provider="openai"', "app-server"]
+
+    command = config["codex_command"] + ["-c", 'model_provider="openai"', "app-server", "--listen", "stdio://"]
+    if native_isolated:
+        env, cleanup = _isolated_native_codex_env(config)
+        try:
+            return AppServer(command, timeout, stop, cancel, env=env, cleanup=cleanup)
+        except Exception:
+            cleanup()
+            raise
     return AppServer(command, timeout, stop, cancel)
 
 
@@ -176,7 +256,7 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
             matches = [item for item in eligible if item.get("id") == default_model]
             source = "configured_default"
         else:
-            matches = [item for item in eligible if item.get("isDefault") is True]
+            matches = [item for item in eligible if item.get("isDefault", item.get("is_default")) is True]
             source = "account_default"
         if len(matches) != 1:
             raise ModelSelectionError("Codex account has no unambiguous default model")
@@ -187,22 +267,38 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
             raise ModelSelectionError("Requested model is unavailable to the Codex account")
         selected = matches[0]
         source = "requested"
-    supported = [
-        value.get("reasoningEffort") for value in selected.get("supportedReasoningEfforts", [])
-        if isinstance(value, dict) and isinstance(value.get("reasoningEffort"), str)
-    ] if isinstance(selected.get("supportedReasoningEfforts", []), list) else []
-    default_effort = selected.get("defaultReasoningEffort") if isinstance(selected.get("defaultReasoningEffort"), str) else None
+    if required_prefix is not None:
+        model_id = selected.get("id")
+        model = selected.get("model")
+        if (not isinstance(model_id, str) or not model_id.startswith(required_prefix)
+                or not model_id[len(required_prefix):].strip()
+                or model != model_id):
+            raise ModelSelectionError("Native Codex did not expose an exact Web model identity")
+    raw_supported = selected.get("supportedReasoningEfforts", selected.get("supported_reasoning_efforts", []))
+    if isinstance(raw_supported, list):
+        supported = [
+            value if isinstance(value, str) else value.get("reasoningEffort")
+            for value in raw_supported
+            if isinstance(value, str) or isinstance(value, dict)
+        ]
+        supported = [value for value in supported if isinstance(value, str)]
+    else:
+        supported = []
+    default_effort = selected.get("defaultReasoningEffort", selected.get("default_reasoning_effort"))
+    if not isinstance(default_effort, str):
+        default_effort = None
     effort = reasoning_effort or default_effort
     if effort is None and len(supported) == 1:
         effort = supported[0]
     if effort is not None and supported and effort not in supported:
         raise ModelSelectionError("Selected model does not support the requested reasoning effort")
-    if required_prefix is not None and not effort:
-        raise ModelSelectionError("Selected Web model has no unambiguous reasoning effort")
+    if required_prefix is not None and (not effort or effort not in supported):
+        raise ModelSelectionError("Selected Web reasoning effort is not verified by Native Codex metadata")
     return {
         "id": selected["id"],
         "model": selected["model"],
-        "display_name": selected.get("displayName") if isinstance(selected.get("displayName"), str) else selected["id"],
+        "display_name": selected.get("displayName", selected.get("display_name"))
+        if isinstance(selected.get("displayName", selected.get("display_name")), str) else selected["id"],
         "source": source,
         "default_reasoning_effort": default_effort,
         "supported_reasoning_efforts": supported,
@@ -210,19 +306,28 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
     }
 
 
-def list_models(config, required_prefix=None):
-    """Return the Codex app-server catalog without claiming model entitlement."""
+def list_models(config, required_prefix=None, *, native_isolated=False):
+    """Return the Native Codex app-server catalog without claiming inference entitlement."""
     app = None
     try:
-        app = _app_server(config, timeout=config.get("model_list_timeout_seconds", 60))
+        app = _app_server(
+            config,
+            timeout=config.get("model_list_timeout_seconds", 60),
+            backend="codex_app_server",
+            native_isolated=native_isolated,
+        )
         app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "0.2.12"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
-            items = [
-                item for item in items
-                if isinstance(item.get("id"), str) and item["id"].startswith(required_prefix)
-            ]
+            filtered = []
+            for item in items:
+                model_id = item.get("id")
+                if isinstance(model_id, str) and model_id.startswith(required_prefix):
+                    if item.get("model") != model_id:
+                        raise ModelSelectionError("Native Codex Web model ID and execution model differ")
+                    filtered.append(item)
+            items = filtered
         return {
             "backend": "codex_app_server",
             "catalog_source": "model/list",
@@ -246,93 +351,67 @@ def list_models(config, required_prefix=None):
             app.close()
 
 
-def _redact_tokens(value, credentials):
-    if credentials is None:
-        return value
-    if isinstance(value, str):
-        for key in ("access_token", "refresh_token", "id_token"):
-            token = credentials.get(key)
-            if isinstance(token, str) and token:
-                value = value.replace(token, "[REDACTED]")
-        return value
-    if isinstance(value, list):
-        return [_redact_tokens(item, credentials) for item in value]
-    if isinstance(value, dict):
-        return {key: _redact_tokens(item, credentials) for key, item in value.items()}
-    return value
-
-
 def run_task(config, store, job, stop=None):
     app = None
     phase = "load_task"
     turn_start_attempted = False
     selected_model = None
     model_reroutes = []
-    credentials = None
     try:
         payload = job["payload"]
         backend = payload.get("execution_backend", "codex_app_server")
         dispatch_origin = payload.get("dispatch_origin")
         if dispatch_origin is None:
-            # Legacy plan tasks are preserved only for reconciliation. New Web
-            # tasks always persist dispatch_origin at acceptance.
-            dispatch_origin = "web" if backend == "chatgpt_plan" else "local"
+            # Preserve legacy persisted tasks for reconciliation only.
+            dispatch_origin = "web" if backend in ("chatgpt_web_headless", "chatgpt_plan") else "local"
         if config.get("_dispatch_origin") == "web" and "execution_backend" not in payload:
             raise ModelSelectionError("Legacy task origin is unverified; reconcile it before web dispatch")
         phase = "validate_project"
         project = project_config(config, payload["project_id"], payload["scope"])
-        if backend == "chatgpt_plan":
-            # Backward-compatible execution/reconciliation path for persisted
-            # pre-0.2.12 tasks only. New acceptance never selects this backend.
-            phase = "chatgpt_plan_authorization"
-            credentials = siwc.get_credentials(config)
-            if payload.get("siwc_registration") != siwc.registration(credentials):
-                raise siwc.SiwcError("Task account registration no longer matches the authorized account")
-            phase = "model_catalog"
-            catalog = siwc.list_models(config, credentials=credentials)
-            snapshot = payload.get("selected_model")
-            if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
-                raise siwc.SiwcError("ChatGPT plan task has no validated model selection")
-            selected_model = siwc.select_model(catalog, snapshot["id"])
-            if selected_model["model"] != snapshot.get("model"):
-                raise siwc.SiwcError("Task model selection no longer matches the account catalog")
-            selected_model["source"] = snapshot["source"]
-        elif backend != "codex_app_server":
+
+        if backend in ("chatgpt_web_headless", "chatgpt_plan"):
+            phase = "reject_legacy_web_route"
+            raise ModelSelectionError("Legacy Web provider routes are disabled; reconcile and resubmit through Native Codex")
+        if backend != "codex_app_server":
+            phase = "validate_backend"
             raise ModelSelectionError("Task execution backend is invalid")
+        if dispatch_origin == "web":
+            snapshot = payload.get("selected_model")
+            if (not isinstance(snapshot, dict)
+                    or not isinstance(snapshot.get("id"), str)
+                    or not snapshot["id"].startswith("chatgpt-web/")
+                    or snapshot.get("model") != snapshot["id"]):
+                raise ModelSelectionError("Web task has no validated Native Codex model selection")
+            selected_model = dict(snapshot)
 
         phase = "launch_app_server"
-        launch_args = (config, config.get("task_timeout_seconds", 600), stop, lambda: store.cancel_requested(job["id"]))
-        app = (_app_server(*launch_args, backend=backend, credentials=credentials) if backend == "chatgpt_plan"
-               else _app_server(*launch_args, backend=backend))
+        launch_args = (config, config.get("task_timeout_seconds", 600), stop,
+                       lambda: store.cancel_requested(job["id"]))
+        app = _app_server(
+            *launch_args,
+            backend="codex_app_server",
+            native_isolated=dispatch_origin == "web",
+        )
         phase = "initialize"
         app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.12"}})
         app.send({"method": "initialized", "params": {}})
 
-        if backend == "codex_app_server":
+        if dispatch_origin == "web":
+            phase = "native_model_catalog"
+            runtime_model = _select_model(
+                _model_catalog(app),
+                selected_model["id"],
+                required_prefix="chatgpt-web/",
+                reasoning_effort=selected_model.get("reasoning_effort"),
+            )
+            if runtime_model["model"] != selected_model["model"]:
+                raise ModelSelectionError("Web model no longer matches the Native Codex catalog")
+            selected_model["reasoning_effort"] = runtime_model.get("reasoning_effort")
+            selected_model["default_reasoning_effort"] = runtime_model.get("default_reasoning_effort")
+            selected_model["supported_reasoning_efforts"] = runtime_model.get("supported_reasoning_efforts", [])
+        else:
             phase = "model_catalog"
-            try:
-                catalog = _model_catalog(app)
-                if dispatch_origin == "web":
-                    snapshot = payload.get("selected_model")
-                    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
-                        raise ModelSelectionError("Web task has no validated model selection")
-                    selected_model = _select_model(
-                        catalog,
-                        snapshot["id"],
-                        required_prefix="chatgpt-web/",
-                        reasoning_effort=snapshot.get("reasoning_effort"),
-                    )
-                    if selected_model["model"] != snapshot.get("model"):
-                        raise ModelSelectionError("Web task model selection no longer matches the Native Codex catalog")
-                    if selected_model.get("reasoning_effort") != snapshot.get("reasoning_effort"):
-                        raise ModelSelectionError("Web task reasoning effort no longer matches the accepted model snapshot")
-                    selected_model["source"] = snapshot.get("source", "requested")
-                else:
-                    selected_model = _select_model(catalog, payload.get("model_version"))
-            except ModelSelectionError:
-                raise
-            except Exception as exc:
-                raise ModelSelectionError("Codex model catalog could not be verified") from exc
+            selected_model = _select_model(_model_catalog(app), payload.get("model_version"))
 
         thread_params = {
             "cwd": project["cwd"],
@@ -340,8 +419,6 @@ def run_task(config, store, job, stop=None):
             "sandbox": "read-only" if payload["scope"] == "read-only" else "workspace-write",
             "model": selected_model["model"],
         }
-        if backend == "chatgpt_plan":
-            thread_params["modelProvider"] = "openai_chatgpt_plan"
         parent_id = payload.get("parent_task_id")
         if parent_id:
             thread_params["threadId"] = store.get(parent_id, "task")["thread_id"]
@@ -382,8 +459,11 @@ def run_task(config, store, job, stop=None):
                 if item.get("type") == "agentMessage":
                     answer = str(item.get("text", ""))[:50000]
                 if item.get("type") == "commandExecution" and len(observations) < 50:
-                    observations.append({"type": "commandExecution", "exit_code": item.get("exitCode"),
-                                         "status": item.get("status")})
+                    observations.append({
+                        "type": "commandExecution",
+                        "exit_code": item.get("exitCode"),
+                        "status": item.get("status"),
+                    })
             if message.get("method") == "turn/completed":
                 final = params["turn"]
                 state = {"completed": "completed", "failed": "failed", "interrupted": "interrupted"}.get(final["status"], "unknown")
@@ -392,30 +472,43 @@ def run_task(config, store, job, stop=None):
                 inference_verified = final["status"] == "completed" and model_verified
                 if not model_verified:
                     state = "unknown"
-                store.update_task(job["id"], state=state,
-                                  result=_redact_tokens({"answer": answer, "observations": observations, "codex_status": final["status"],
-                                          "model_selection": {
-                                              "backend": backend,
-                                              "dispatch_origin": dispatch_origin,
-                                              "catalog_source": "responses_api_models" if backend == "chatgpt_plan" else "model/list",
-                                              "id": selected_model["id"],
-                                              "model": selected_model["model"],
-                                              "source": selected_model["source"],
-                                              "reasoning_effort": selected_model.get("reasoning_effort"),
-                                              "catalog_integrity_verified": True,
-                                              "explicitly_sent": True,
-                                              "observed_model": observed_model,
-                                              "reroutes": model_reroutes,
-                                              "model_identity_verified": model_verified,
-                                              "inference_verified": inference_verified,
-                                          }}, credentials))
+                store.update_task(
+                    job["id"],
+                    state=state,
+                    result={
+                        "answer": answer,
+                        "observations": observations,
+                        "codex_status": final["status"],
+                        "terminal_error": final.get("error"),
+                        "model_selection": {
+                            "backend": backend,
+                            "dispatch_origin": dispatch_origin,
+                            "catalog_source": "model/list",
+                            "id": selected_model["id"],
+                            "model": selected_model["model"],
+                            "source": selected_model["source"],
+                            "reasoning_effort": selected_model.get("reasoning_effort"),
+                            "supported_reasoning_efforts": selected_model.get("supported_reasoning_efforts", []),
+                            "catalog_integrity_verified": True,
+                            "explicitly_sent": True,
+                            "observed_model": observed_model,
+                            "reroutes": model_reroutes,
+                            "model_identity_verified": model_verified,
+                            "inference_verified": inference_verified,
+                            "native_codex_owns_inference": True,
+                        },
+                    },
+                )
                 phase = "terminal_event_verified"
                 break
     except TaskCancelled:
-        store.update_task(job["id"], state="cancelled", result={
-            "cancelled": True, "failure_phase": phase, "execution_may_have_started": turn_start_attempted,
+        store.update_task(job["id"], state="unknown" if turn_start_attempted else "cancelled", result={
+            "cancel_requested": True,
+            "failure_phase": phase,
+            "execution_may_have_started": turn_start_attempted,
+            "error": "Native turn stop was not confirmed" if turn_start_attempted else None,
         })
-    except (ModelSelectionError, siwc.SiwcError) as exc:
+    except ModelSelectionError as exc:
         store.update_task(job["id"], state="failed", result={
             "error": str(exc),
             "failure_phase": phase,
@@ -430,8 +523,6 @@ def run_task(config, store, job, stop=None):
             "execution_may_have_started": turn_start_attempted,
         })
     except Exception as exc:
-        # Preserve the phase and exception class without logging prompts, tokens,
-        # paths, or raw exception text. Never replay an ambiguous turn start.
         store.update_task(job["id"], state="unknown" if turn_start_attempted else "failed", result={
             "error": "Codex connection failed",
             "failure_phase": phase,

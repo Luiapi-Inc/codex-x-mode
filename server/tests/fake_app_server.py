@@ -25,12 +25,12 @@ for line in sys.stdin:
                 "supportedReasoningEfforts": [{"reasoningEffort": "medium", "description": "Fixture"}],
             },
             {
-                "id": "chatgpt-web/fixture-model", "model": "chatgpt-web/fixture-model",
-                "displayName": "Fixture Web Model", "hidden": False, "isDefault": False,
+                "id": "chatgpt-web/gpt-5.6-sol", "model": "chatgpt-web/gpt-5.6-sol",
+                "displayName": "Fixture ChatGPT Web Model", "hidden": False, "isDefault": False,
                 "defaultReasoningEffort": "high",
                 "supportedReasoningEfforts": [
-                    {"reasoningEffort": "medium", "description": "Fixture Web medium"},
-                    {"reasoningEffort": "high", "description": "Fixture Web high"},
+                    {"reasoningEffort": "medium", "description": "Fixture medium"},
+                    {"reasoningEffort": "high", "description": "Fixture high"},
                 ],
             },
         ], "nextCursor": None}})
@@ -41,8 +41,8 @@ for line in sys.stdin:
     elif method == "turn/start":
         params = request["params"]
         assert params["approvalPolicy"] == "never"
-        assert params["model"] in ("fixture-model", "chatgpt-web/fixture-model")
-        expected_effort = "high" if params["model"].startswith("chatgpt-web/") else "medium"
+        assert params["model"] in ("fixture-model", "chatgpt-web/gpt-5.6-sol")
+        expected_effort = "high" if params["model"] == "chatgpt-web/gpt-5.6-sol" else "medium"
         assert params.get("effort") == expected_effort
         assert "sandboxPolicy" not in params
         emit({"id": request["id"], "result": {"turn": {"id": "fixture-turn", "status": "inProgress"}}})

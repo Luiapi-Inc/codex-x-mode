@@ -20,8 +20,9 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertEqual(json.loads((root / ".codex-plugin/plugin.json").read_text())["version"], version)
         self.assertEqual(tomllib.loads((root / "server/pyproject.toml").read_text())["project"]["version"], version)
         self.assertEqual(SERVER_INFO["version"], version)
-        self.assertEqual(schema("https://bridge.example.invalid")["info"]["version"], version)
-        self.assertEqual(json.loads((root / "server/openapi-template.json").read_text())["info"]["version"], version)
+        generated_schema = schema("https://bridge.example.invalid")
+        self.assertEqual(generated_schema["info"]["version"], version)
+        self.assertEqual(json.loads((root / "server/openapi-template.json").read_text()), generated_schema)
         # Extract literal status version without opening a persistent database.
         def status_version(source):
             tree = ast.parse(source)
