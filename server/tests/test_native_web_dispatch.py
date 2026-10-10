@@ -279,7 +279,7 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         self.assertTrue(selection["inference_verified"])
         self.assertTrue(selection["native_codex_owns_inference"])
 
-    def test_missing_terminal_model_identity_remains_unknown_without_replay(self):
+    def test_missing_terminal_model_identity_is_not_accepted_after_confirmed_stop(self):
         job = create_task(self.config, self.store, self.body(scope="workspace-write"))
 
         class MissingIdentity:
@@ -315,6 +315,7 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
                 if self._cleanup is not None:
                     self._cleanup()
                     self._cleanup = None
+                return True  # Native process group was proven stopped.
 
             def receive(self):
                 return {"method": "turn/completed", "params": {
@@ -324,8 +325,30 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
 
         with patch.object(codex, "AppServer", MissingIdentity):
             codex.run_task(self.config, self.store, self.store.claim("task"))
-        self.assertEqual(self.store.get(job["id"])["state"], "unknown")
-        self.assertEqual(create_task(self.config, self.store, self.body(scope="workspace-write"))["id"], job["id"])
+        actual = self.store.get(job["id"])
+        self.assertEqual(actual["state"], "failed")
+        self.assertFalse(actual["result"]["model_selection"]["inference_verified"])
+        self.assertFalse(actual["result"]["reconciliation"]["accepted_success"])
+        self.assertEqual(self.store.unknown_projects(), [])
+        replacement = create_task(self.config, self.store, self.body(
+            request_key="after-confirmed-stop", scope="workspace-write"))
+        self.assertNotEqual(replacement["id"], job["id"])
+
+        # Native completion without a confirmed process-group stop must retain
+        # the unknown write claim and prevent any competing task submission.
+        class UnconfirmedStop(MissingIdentity):
+            def close(self):
+                super().close()
+                return False
+
+        with patch.object(codex, "AppServer", UnconfirmedStop):
+            codex.run_task(self.config, self.store, self.store.claim("task"))
+        self.assertEqual(self.store.get(replacement["id"])["state"], "unknown")
+        self.assertEqual(self.store.unknown_projects(), ["demo"])
+        with self.assertRaises(Fault):
+            create_task(self.config, self.store, self.body(
+                request_key="blocked-by-unknown-writer", scope="workspace-write"))
+
 
     def test_failed_terminal_preserves_provider_error_without_native_auth_exposure(self):
         job = create_task(self.config, self.store, self.body(request_key="failed-terminal"))
@@ -359,6 +382,7 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
                 if self._cleanup is not None:
                     self._cleanup()
                     self._cleanup = None
+                return True
 
             def receive(self):
                 return {"method": "turn/completed", "params": {
@@ -370,7 +394,8 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         with patch.object(codex, "AppServer", FailedTerminal):
             codex.run_task(self.config, self.store, self.store.claim("task"))
         result = self.store.get(job["id"])
-        self.assertEqual(result["state"], "unknown")
+        self.assertEqual(result["state"], "failed")
+        self.assertFalse(result["result"]["reconciliation"]["accepted_success"])
         self.assertEqual(result["result"]["terminal_error"]["code"], "provider_error")
         self.assertNotIn("opaque-native-auth", str(result["result"]))
 

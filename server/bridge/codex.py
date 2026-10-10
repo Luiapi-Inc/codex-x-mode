@@ -531,7 +531,12 @@ def run_task(config, store, job, stop=None):
         })
     finally:
         if app:
-            app.close()
+            # A Native terminal notification establishes turn completion, but
+            # writer safety also requires the owned app-server process to stop.
+            # Missing model identity still fails task acceptance.
+            process_stopped = app.close()
+            if process_stopped is True:
+                store.finalize_unverified_terminal_task(job["id"])
 
 
 def worker(config, store, stop):

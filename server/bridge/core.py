@@ -497,6 +497,46 @@ class Store:
             self.db.execute("UPDATE jobs SET " + ",".join(updates) + " WHERE id=?", (*values, job_id))
 
 
+    def finalize_unverified_terminal_task(self, job_id):
+        """Release a task writer only after Native terminal event AND owned process shutdown.
+
+        Execution safety and model/acceptance verification are independent. The
+        caller must invoke this only when its app-server process group is proven
+        stopped. A task without an exact recorded terminal event stays unknown.
+        """
+        with self._immediate_transaction():
+            row = self.db.execute(
+                "SELECT state,result,thread_id,turn_id FROM jobs WHERE id=? AND kind='task'",
+                (job_id,),
+            ).fetchone()
+            if row is None or row["state"] != "unknown" or not row["thread_id"] or not row["turn_id"]:
+                return False
+            result = json.loads(row["result"]) if row["result"] else {}
+            model = result.get("model_selection")
+            if (
+                result.get("codex_status") not in ("completed", "failed", "interrupted")
+                or not isinstance(model, dict)
+                or model.get("inference_verified") is not False
+            ):
+                return False
+            if "reconciliation" in result:
+                return False
+            result["reconciliation"] = {
+                "decision": "terminal_turn_and_process_stopped__acceptance_unverified",
+                "native_terminal_status": result["codex_status"],
+                "thread_id": row["thread_id"],
+                "turn_id": row["turn_id"],
+                "process_group_stopped": True,
+                "accepted_success": False,
+                "original_state": "unknown",
+            }
+            updated = self.db.execute(
+                "UPDATE jobs SET state='failed',result=? WHERE id=? AND kind='task' AND state='unknown'",
+                (encoded(result), job_id),
+            )
+            return updated.rowcount == 1
+
+
 def prepare_response(store, payload):
     if not isinstance(payload, dict):
         raise Fault(400, "Expected object")
