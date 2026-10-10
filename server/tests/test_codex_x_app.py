@@ -420,7 +420,7 @@ class CodexXAppContractTests(unittest.TestCase):
         model_id = "chatgpt-web/gpt-5.6-sol"
         thread = {
             "id": "thread-web-parent", "cwd": root, "model": model_id,
-            "modelProvider": "openai", "sandbox": "read-only", "turns": [],
+            "modelProvider": "openai", "sandbox": "read-only", "status": {"type": "idle"}, "turns": [],
         }
         fake = FakeApp({
             "thread/read": {"thread": thread},
@@ -448,6 +448,7 @@ class CodexXAppContractTests(unittest.TestCase):
                 thread = {
                     "id": "thread-web-active", "cwd": root, "model": model_id,
                     "effort": active_effort, "modelProvider": "openai", "sandbox": "read-only",
+                    "status": {"type": "active"},
                     "turns": [{"id": "turn-active", "status": "inProgress", "items": []}],
                 }
                 fake = FakeApp({
@@ -469,6 +470,7 @@ class CodexXAppContractTests(unittest.TestCase):
         verified_thread = {
             "id": "thread-web-active-verified", "cwd": root, "model": model_id,
             "effort": "high", "modelProvider": "openai", "sandbox": "read-only",
+            "status": {"type": "active"},
             "turns": [{"id": "turn-active", "status": "inProgress", "items": []}],
         }
         verified_fake = FakeApp({
@@ -555,6 +557,220 @@ class CodexXAppContractTests(unittest.TestCase):
         self.assertIsNone(self.store.app_thread_scope("unproved"))
         self.assertEqual([method for method, _ in fake.calls], ["thread/start"])
 
+    def test_workspace_write_app_turn_holds_shared_claim_until_terminal_wait_evidence(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        thread = {
+            "id": "app-write-thread", "cwd": root, "modelProvider": "openai",
+            "sandbox": "workspace-write", "status": {"type": "active"},
+            "turns": [{"id": "app-write-turn", "status": "inProgress"}],
+        }
+        current = {"thread": thread}
+        fake = FakeApp({
+            "thread/start": {
+                "thread": {key: value for key, value in thread.items() if key not in ("status", "turns")},
+                "cwd": root, "sandbox": {"type": "workspaceWrite", "writableRoots": []},
+            },
+            "turn/start": {"turn": {"id": "app-write-turn", "status": "inProgress"}},
+            "thread/read": lambda _params: current,
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            codex_x_app.create_thread(
+                self.config, {"prompt": "Make a bounded edit", "scope": "workspace-write"}, self.store,
+            )
+
+        claim = self.store.app_writer_claim_for_thread("app-write-thread")
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim["state"], "running")
+        with self.assertRaises(Fault) as caught:
+            self.store.create("task", {
+                "project_id": "demo", "resource_id": str(Path(root).resolve()),
+                "resource_project_ids": ["demo"], "scope": "workspace-write", "prompt": "conflict",
+            }, "core-conflict")
+        self.assertEqual(caught.exception.status, 409)
+
+        self.store.close()
+        self.store = Store(Path(self.tmp.name) / "state.sqlite3")
+        self.assertEqual(self.store.app_writer_claim_for_thread("app-write-thread")["state"], "unknown")
+        current["thread"] = {**thread, "status": {"type": "idle"},
+                              "turns": [{"id": "app-write-turn", "status": "completed"}]}
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            result = codex_x_app.wait_threads(
+                self.config, {"threadIds": ["app-write-thread"], "timeoutMs": 0}, self.store,
+            )
+        self.assertTrue(result["completed"])
+        self.assertIsNone(self.store.app_writer_claim_for_thread("app-write-thread"))
+        accepted = self.store.create("task", {
+            "project_id": "demo", "resource_id": str(Path(root).resolve()),
+            "resource_project_ids": ["demo"], "scope": "workspace-write", "prompt": "next",
+        }, "after-app-terminal")
+        self.assertEqual(accepted["state"], "queued")
+
+    def test_terminal_turn_start_does_not_release_claim_while_thread_is_active(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        started_thread = {
+            "id": "terminal-start-active-thread", "cwd": root,
+            "modelProvider": "openai", "sandbox": "workspace-write",
+        }
+        active_thread = {
+            **started_thread,
+            "status": {"type": "active"},
+            "turns": [{"id": "newer-active-turn", "status": "inProgress"}],
+        }
+        fake = FakeApp({
+            "thread/start": {
+                "thread": started_thread,
+                "cwd": root,
+                "sandbox": {"type": "workspaceWrite", "writableRoots": []},
+            },
+            "turn/start": {"turn": {"id": "terminal-start-turn", "status": "completed"}},
+            "thread/read": {"thread": active_thread},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            codex_x_app.create_thread(
+                self.config, {"prompt": "Write in the project", "scope": "workspace-write"}, self.store,
+            )
+
+        claim = self.store.app_writer_claim_for_thread(started_thread["id"])
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim["state"], "running")
+        self.assertEqual(claim["turn_id"], "terminal-start-turn")
+        with self.assertRaises(Fault):
+            self.store.create("task", {
+                "project_id": "demo", "resource_id": str(Path(root).resolve()),
+                "resource_project_ids": ["demo"], "scope": "workspace-write", "prompt": "overlapping Core write",
+            }, "terminal-start-must-stay-blocked")
+
+    def test_terminal_turn_start_releases_claim_only_with_idle_exact_turn_read(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        thread_id, turn_id = "idle-terminal-thread", "idle-terminal-turn"
+        started_thread = {"id": thread_id, "cwd": root, "modelProvider": "openai", "sandbox": "workspace-write"}
+        fake = FakeApp({
+            "thread/start": {
+                "thread": started_thread,
+                "cwd": root,
+                "sandbox": {"type": "workspaceWrite", "writableRoots": []},
+            },
+            "turn/start": {"turn": {"id": turn_id, "status": "completed"}},
+            "thread/read": {"thread": {
+                **started_thread,
+                "status": {"type": "idle"},
+                "turns": [{"id": turn_id, "status": "completed"}],
+            }},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            codex_x_app.create_thread(
+                self.config, {"prompt": "Write and finish", "scope": "workspace-write"}, self.store,
+            )
+
+        self.assertIsNone(self.store.app_writer_claim_for_thread(thread_id))
+
+    def test_idle_app_thread_without_matching_terminal_turn_keeps_writer_blocked(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        thread = {
+            "id": "idle-unknown-write", "cwd": root, "modelProvider": "openai",
+            "sandbox": "workspace-write", "status": {"type": "idle"}, "turns": [],
+        }
+        claim = self.store.acquire_app_writer(
+            resource_id=str(Path(root).resolve()), project_id="demo",
+            resource_project_ids=["demo"], thread_id=thread["id"],
+        )
+        self.store.set_app_writer_turn(claim["id"], thread["id"], "unavailable-turn")
+        self.store.mark_app_writer_unknown(claim["id"], {"reason": "missing turn proof"})
+        fake = FakeApp({"thread/read": {"thread": thread}})
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault) as caught:
+                codex_x_app.wait_threads(
+                    self.config, {"threadIds": [thread["id"]], "timeoutMs": 0}, self.store,
+                )
+        self.assertEqual(caught.exception.status, 503)
+        self.assertEqual(self.store.app_writer_claim_for_thread(thread["id"])["state"], "unknown")
+
+    def test_ambiguous_workspace_write_turn_persists_unknown_claim(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        thread = {"id": "ambiguous-write-thread", "cwd": root, "modelProvider": "openai"}
+        fake = FakeApp({
+            "thread/start": {
+                "thread": thread, "cwd": root,
+                "sandbox": {"type": "workspaceWrite", "writableRoots": []},
+            },
+            "turn/start": lambda _params: (_ for _ in ()).throw(RuntimeError("connection lost after request send")),
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault) as caught:
+                codex_x_app.create_thread(
+                    self.config, {"prompt": "Might have written", "scope": "workspace-write"}, self.store,
+                )
+        self.assertEqual(caught.exception.status, 503)
+        claim = self.store.app_writer_claim_for_thread("ambiguous-write-thread")
+        self.assertEqual(claim["state"], "unknown")
+        self.assertEqual(self.store.unknown_projects(), ["demo"])
+        with self.assertRaises(Fault) as blocked:
+            self.store.create("task", {
+                "project_id": "demo", "resource_id": str(Path(root).resolve()),
+                "resource_project_ids": ["demo"], "scope": "workspace-write", "prompt": "conflict",
+            }, "blocked-by-unknown-app")
+        self.assertEqual(blocked.exception.status, 409)
+
+    def test_failed_post_start_thread_read_marks_writer_claim_unknown(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        thread = {"id": "failed-terminal-proof", "cwd": root, "modelProvider": "openai", "sandbox": "workspace-write"}
+        fake = FakeApp({
+            "thread/start": {
+                "thread": thread,
+                "cwd": root,
+                "sandbox": {"type": "workspaceWrite", "writableRoots": []},
+            },
+            "turn/start": {"turn": {"id": "proof-read-turn", "status": "inProgress"}},
+            "thread/read": lambda _params: (_ for _ in ()).throw(RuntimeError("read disconnected")),
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault) as caught:
+                codex_x_app.create_thread(
+                    self.config, {"prompt": "May write", "scope": "workspace-write"}, self.store,
+                )
+        self.assertEqual(caught.exception.status, 503)
+        self.assertEqual(self.store.app_writer_claim_for_thread(thread["id"])["state"], "unknown")
+        self.assertEqual(self.store.unknown_projects(), ["demo"])
+
+    def test_active_workspace_write_app_turn_requires_its_durable_claim_to_steer(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        thread = {
+            "id": "foreign-active-write", "cwd": root, "modelProvider": "openai",
+            "sandbox": "workspace-write", "status": {"type": "active"},
+            "turns": [{"id": "foreign-active-turn", "status": "inProgress"}],
+        }
+        fake = FakeApp({"thread/read": {"thread": thread}})
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault) as caught:
+                codex_x_app.send_message_to_thread(
+                    self.config, {"threadId": thread["id"], "prompt": "Steer?"}, self.store,
+                )
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual([method for method, _ in fake.calls], ["thread/read"])
+
+    def test_owned_active_workspace_write_turn_can_be_steered_without_releasing_claim(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        thread = {
+            "id": "owned-active-write", "cwd": root, "modelProvider": "openai",
+            "sandbox": "workspace-write", "status": {"type": "active"},
+            "turns": [{"id": "owned-active-turn", "status": "inProgress"}],
+        }
+        claim = self.store.acquire_app_writer(
+            resource_id=str(Path(root).resolve()), project_id="demo",
+            resource_project_ids=["demo"], thread_id=thread["id"],
+        )
+        self.store.set_app_writer_turn(claim["id"], thread["id"], "owned-active-turn")
+        fake = FakeApp({
+            "thread/read": {"thread": thread},
+            "turn/steer": {"turnId": "owned-active-turn"},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            result = codex_x_app.send_message_to_thread(
+                self.config, {"threadId": thread["id"], "prompt": "Continue this turn"}, self.store,
+            )
+        self.assertEqual(result["mode"], "steer")
+        self.assertEqual(self.store.app_writer_claim_for_thread(thread["id"])["state"], "running")
+
     def test_send_message_steers_active_turn(self):
         thread = {
             "id": "thread-1", "modelProvider": "openai", "status": {"type": "active"},
@@ -570,6 +786,21 @@ class CodexXAppContractTests(unittest.TestCase):
         self.assertEqual(result["mode"], "steer")
         params = next(params for method, params in fake.calls if method == "turn/steer")
         self.assertEqual(params["expectedTurnId"], "turn-active")
+
+    def test_send_message_fails_closed_when_thread_and_turn_status_disagree(self):
+        thread = {
+            "id": "status-conflict", "modelProvider": "openai",
+            "cwd": self.config["projects"]["demo"]["cwd"], "sandbox": "read-only",
+            "status": {"type": "active"}, "turns": [],
+        }
+        fake = FakeApp({"thread/read": {"thread": thread}})
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault) as caught:
+                codex_x_app.send_message_to_thread(
+                    self.config, {"threadId": thread["id"], "prompt": "Do not start another turn"},
+                )
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual([method for method, _ in fake.calls], ["thread/read"])
 
     def test_rejects_non_native_thread(self):
         fake = FakeApp({"thread/read": {"thread": {"id": "legacy", "modelProvider": "custom_gpt_bridge", "turns": []}}})

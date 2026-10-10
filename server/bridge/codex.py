@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import queue
@@ -103,21 +104,76 @@ class AppServer:
 
     def close(self):
         import signal
+        stopped = False
         try:
             if self.process.poll() is None:
-                os.killpg(self.process.pid, signal.SIGTERM)
+                try:
+                    os.killpg(self.process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    pass
+            if self.process.poll() is None:
                 try:
                     self.process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
+                    if self.process.poll() is None:
+                        try:
+                            os.killpg(self.process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        self.process.wait(timeout=5)
+            stopped = self._wait_process_group_stopped(timeout=2)
+            if not stopped and self.process.poll() is None:
+                try:
                     os.killpg(self.process.pid, signal.SIGKILL)
-                    self.process.wait(timeout=5)
-            for handle in (self.process.stdin, self.process.stdout):
-                handle.close()
-            self.reader.join(timeout=2)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    pass
+                if self.process.poll() is None:
+                    try:
+                        self.process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                stopped = self._wait_process_group_stopped(timeout=2)
+        except Exception:
+            stopped = False
         finally:
-            if self.cleanup is not None:
+            for handle in (self.process.stdin, self.process.stdout):
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+            self.reader.join(timeout=2)
+        if stopped and self.cleanup is not None:
+            try:
                 self.cleanup()
                 self.cleanup = None
+            except Exception:
+                pass
+        elif self.cleanup is not None:
+            owner = getattr(self.cleanup, "__self__", None)
+            finalizer = getattr(owner, "_finalizer", None)
+            if finalizer is not None and finalizer.alive:
+                finalizer.detach()
+            self.cleanup = None
+        return stopped
+
+    def _wait_process_group_stopped(self, timeout=2):
+        deadline = time.monotonic() + max(0, float(timeout))
+        while True:
+            try:
+                os.killpg(self.process.pid, 0)
+            except ProcessLookupError:
+                return True
+            except OSError as exc:
+                if exc.errno == errno.ESRCH:
+                    return True
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
 
 
 def _isolated_native_codex_env(config):
@@ -446,10 +502,11 @@ def run_task(config, store, job, stop=None):
                 phase = "terminal_event_verified"
                 break
     except TaskCancelled:
-        store.update_task(job["id"], state="cancelled", result={
-            "cancelled": True,
+        store.update_task(job["id"], state="unknown" if turn_start_attempted else "cancelled", result={
+            "cancel_requested": True,
             "failure_phase": phase,
             "execution_may_have_started": turn_start_attempted,
+            "error": "Native turn stop was not confirmed" if turn_start_attempted else None,
         })
     except ModelSelectionError as exc:
         store.update_task(job["id"], state="failed", result={

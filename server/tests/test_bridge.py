@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bridge.codex import list_models, run_task
+from bridge.codex import AppServer, list_models, run_task
 from bridge.core import Fault, Store, build_output, output_events, prepare_response
 from bridge.http import Server
 from bridge.mcp import MODERN_VERSION, rpc_response
@@ -234,6 +234,94 @@ class TaskResourceTests(unittest.TestCase):
         independent = self.create("other", "workspace-write", "independent-writer")
         self.assertEqual(independent["state"], "queued")
 
+    def test_app_writer_claim_blocks_core_and_survives_restart_until_terminal_evidence(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        claim = self.store.acquire_app_writer(
+            resource_id=root, project_id="demo", resource_project_ids=["demo", "alias"],
+            thread_id="app-thread",
+        )
+        self.assertEqual(claim["state"], "running")
+
+        with self.assertRaises(Fault) as caught:
+            self.create("alias", "workspace-write", "blocked-by-app")
+        self.assertEqual(caught.exception.status, 409)
+        reader = self.create("alias", "read-only", "read-during-app")
+        self.assertEqual(reader["state"], "queued")
+
+        self.store.close()
+        self.store = Store(Path(self.tmp.name) / "state.sqlite3")
+        recovered = self.store.app_writer_claim_for_thread("app-thread")
+        self.assertEqual(recovered["state"], "unknown")
+        self.assertEqual(self.store.unknown_projects(), ["demo"])
+        with self.assertRaises(Fault):
+            self.create("alias", "workspace-write", "still-blocked")
+
+        self.store.set_app_writer_turn(claim["id"], "app-thread", "app-turn")
+        self.store.finish_app_writer(
+            claim["id"], "completed",
+            {"thread_id": "app-thread", "turn_id": "app-turn", "terminal_status": "completed"},
+        )
+        released = self.create("alias", "workspace-write", "released-after-proof")
+        self.assertEqual(released["state"], "queued")
+
+    def test_app_claim_and_core_claim_are_serialized_across_shared_resource(self):
+        queued = self.create("demo", "workspace-write", "queued-core-writer")
+        claim = self.store.acquire_app_writer(
+            resource_id=self.config["projects"]["demo"]["cwd"], project_id="demo",
+            resource_project_ids=["demo", "alias"], thread_id="app-thread",
+        )
+        self.assertIsNone(self.store.claim("task"))
+        self.store.set_app_writer_turn(claim["id"], "app-thread", "app-turn")
+        self.store.finish_app_writer(
+            claim["id"], "failed",
+            {"thread_id": "app-thread", "turn_id": "app-turn", "terminal_status": "failed"},
+        )
+        running = self.store.claim("task")
+        self.assertEqual(running["id"], queued["id"])
+
+    def test_app_claim_refuses_a_running_or_unknown_core_writer(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        job = self.create("demo", "workspace-write", "running-core-writer")
+        running = self.store.claim("task")
+        self.assertEqual(running["id"], job["id"])
+        with self.assertRaises(Fault) as caught:
+            self.store.acquire_app_writer(
+                resource_id=root, project_id="demo", resource_project_ids=["demo", "alias"],
+                thread_id="app-thread",
+            )
+        self.assertEqual(caught.exception.status, 409)
+
+    def test_core_worker_never_runs_two_queued_writers_for_the_same_resource(self):
+        first = self.create("demo", "workspace-write", "first-queued-writer")
+        second = self.create("alias", "workspace-write", "second-queued-writer")
+        running = self.store.claim("task")
+        self.assertEqual(running["id"], first["id"])
+        self.assertIsNone(self.store.claim("task"))
+        self.store.update_task(first["id"], state="completed", result={"terminal": True})
+        next_writer = self.store.claim("task")
+        self.assertEqual(next_writer["id"], second["id"])
+
+    def test_app_writer_claim_is_unique_across_sqlite_connections(self):
+        second = Store(Path(self.tmp.name) / "state.sqlite3")
+        try:
+            def acquire(store, thread_id):
+                try:
+                    return store.acquire_app_writer(
+                        resource_id=self.config["projects"]["demo"]["cwd"],
+                        project_id="demo", resource_project_ids=["demo", "alias"],
+                        thread_id=thread_id,
+                    )
+                except Fault:
+                    return None
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda args: acquire(*args), ((self.store, "one"), (second, "two"))))
+            self.assertEqual(sum(result is not None for result in results), 1)
+            winner = next(result for result in results if result is not None)
+            self.assertIn(winner["thread_id"], ("one", "two"))
+        finally:
+            second.close()
+
     def test_legacy_unknown_writer_uses_project_alias_mapping(self):
         legacy = self.store.create("task", {
             "project_id": "demo", "prompt": "Legacy", "scope": "workspace-write",
@@ -251,6 +339,18 @@ class TaskResourceTests(unittest.TestCase):
         self.assertEqual(current["unknown_tasks"][0]["scope"], "read-only")
         self.assertFalse(current["unknown_tasks"][0]["write_conflict"])
         self.assertEqual(current["readiness"]["web_executor"], "implemented_unverified")
+
+    def test_unknown_app_writer_is_visible_in_status(self):
+        root = self.config["projects"]["demo"]["cwd"]
+        claim = self.store.acquire_app_writer(
+            resource_id=root, project_id="demo", resource_project_ids=["demo", "alias"],
+            thread_id="unknown-app-thread",
+        )
+        self.store.set_app_writer_turn(claim["id"], "unknown-app-thread", "unknown-app-turn")
+        self.store.mark_app_writer_unknown(claim["id"], {"reason": "test ambiguity"})
+        current = status(self.config, self.store)
+        self.assertEqual(current["unknown_projects"], ["demo"])
+        self.assertEqual(current["unknown_app_writers"][0]["thread_id"], "unknown-app-thread")
 
 
 class DispatchDiagnosticsTests(unittest.TestCase):
@@ -510,6 +610,77 @@ class AppServerDispatchTests(unittest.TestCase):
         self.store.close()
         self.tmp.cleanup()
 
+    def _fake_managed_app_server(self, cleanup, *, wait_status):
+        class Process:
+            pid = 4321
+
+            def __init__(self):
+                self.returncode = None
+                self.stdin = tempfile.TemporaryFile(mode="w+")
+                self.stdout = tempfile.TemporaryFile(mode="w+")
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                self.returncode = 0
+                return 0
+
+        class Reader:
+            def join(self, timeout=None):
+                pass
+
+        app = AppServer.__new__(AppServer)
+        app.process = Process()
+        app.reader = Reader()
+        app.cleanup = cleanup
+        app._wait_process_group_stopped = lambda timeout=2: wait_status
+        return app
+
+    def test_app_server_auth_home_cleanup_requires_verified_process_group_stop(self):
+        home = tempfile.TemporaryDirectory()
+        path = Path(home.name)
+        (path / "auth.json").write_text("opaque", encoding="utf-8")
+        app = self._fake_managed_app_server(home.cleanup, wait_status=True)
+        with patch("bridge.codex.os.killpg"):
+            self.assertTrue(app.close())
+        self.assertFalse(path.exists())
+
+    def test_app_server_does_not_signal_process_group_after_leader_has_exited(self):
+        app = self._fake_managed_app_server(None, wait_status=True)
+        app.process.returncode = 0
+        with patch("bridge.codex.os.killpg") as killpg:
+            self.assertTrue(app.close())
+        killpg.assert_not_called()
+
+    def test_app_server_keeps_auth_home_when_exited_leader_has_unverified_group(self):
+        home = tempfile.TemporaryDirectory()
+        path = Path(home.name)
+        (path / "auth.json").write_text("opaque", encoding="utf-8")
+        app = self._fake_managed_app_server(home.cleanup, wait_status=False)
+        app.process.returncode = 0
+        with patch("bridge.codex.os.killpg") as killpg:
+            self.assertFalse(app.close())
+        killpg.assert_not_called()
+        del app
+        del home
+        self.assertTrue((path / "auth.json").is_file())
+        (path / "auth.json").unlink()
+        path.rmdir()
+
+    def test_app_server_retains_auth_home_if_process_group_stop_is_unknown(self):
+        home = tempfile.TemporaryDirectory()
+        path = Path(home.name)
+        (path / "auth.json").write_text("opaque", encoding="utf-8")
+        app = self._fake_managed_app_server(home.cleanup, wait_status=False)
+        with patch("bridge.codex.os.killpg"):
+            self.assertFalse(app.close())
+        del app
+        del home
+        self.assertTrue((path / "auth.json").is_file())
+        (path / "auth.json").unlink()
+        path.rmdir()
+
     def test_missing_codex_fails_without_success_claim(self):
         job = self.store.create("task", {"project_id": "demo", "prompt": "x", "scope": "read-only"}, "one")
         run_task(self.config, self.store, self.store.claim("task"))
@@ -537,7 +708,8 @@ class AppServerDispatchTests(unittest.TestCase):
     def test_running_task_cancel_terminates_owned_app_server(self):
         self.config["codex_command"] = [sys.executable, str(Path(__file__).with_name("fake_slow_app_server.py"))]
         self.config["task_timeout_seconds"] = 10
-        self.store.create("task", {"project_id": "demo", "prompt": "slow fixture", "scope": "read-only"}, "slow-one")
+        self.config["projects"]["demo"]["allow_write"] = True
+        self.store.create("task", {"project_id": "demo", "prompt": "slow fixture", "scope": "workspace-write"}, "slow-one")
         job = self.store.claim("task")
         thread = threading.Thread(target=run_task, args=(self.config, self.store, job), daemon=True)
         thread.start()
@@ -548,7 +720,8 @@ class AppServerDispatchTests(unittest.TestCase):
         self.assertEqual(self.store.cancel_task(job["id"], "cancel-running")["state"], "cancelling")
         thread.join(timeout=4)
         self.assertFalse(thread.is_alive())
-        self.assertEqual(self.store.get(job["id"])["state"], "cancelled")
+        self.assertEqual(self.store.get(job["id"])["state"], "unknown")
+        self.assertIn("demo", self.store.unknown_projects())
 
     def test_app_server_fixture_explicit_write_scope(self):
         self.config["codex_command"] = [sys.executable, str(Path(__file__).with_name("fake_app_server.py"))]

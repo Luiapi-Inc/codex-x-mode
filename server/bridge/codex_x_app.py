@@ -441,6 +441,115 @@ def _project(config, project_id=None, scope="read-only"):
     return project_id, project
 
 
+def _project_resource_identity(config, project_id, project):
+    try:
+        root = Path(project["cwd"]).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise Fault(409, "Canonical project resource cannot be verified") from exc
+    if not root.is_dir():
+        raise Fault(409, "Canonical project resource is not a directory")
+    aliases = []
+    for alias, candidate in config.get("projects", {}).items():
+        try:
+            if Path(candidate["cwd"]).resolve(strict=True) == root:
+                aliases.append(alias)
+        except (KeyError, OSError, RuntimeError, TypeError):
+            continue
+    return str(root), sorted(set(aliases or [project_id]))
+
+
+def _turn_status(turn):
+    status = turn.get("status") if isinstance(turn, dict) else None
+    return status.get("type") if isinstance(status, dict) else status
+
+
+_TERMINAL_NATIVE_TURN_STATUSES = {"completed", "failed", "interrupted", "cancelled"}
+
+
+def _start_workspace_write_turn(app, store, config, project_id, project, thread_id, turn_params):
+    if store is None:
+        raise Fault(503, "Durable workspace-write ownership is unavailable")
+    resource_id, aliases = _project_resource_identity(config, project_id, project)
+    claim = store.acquire_app_writer(
+        resource_id=resource_id,
+        project_id=project_id,
+        resource_project_ids=aliases,
+        thread_id=thread_id,
+    )
+    try:
+        response = app.call("turn/start", turn_params)
+    except Exception as exc:
+        store.mark_app_writer_unknown(claim["id"], {
+            "thread_id": thread_id,
+            "turn_id": None,
+            "reason": "Native turn/start outcome is ambiguous",
+        })
+        raise Fault(503, "Native workspace-write outcome is unknown; no automatic replay") from exc
+    turn = response.get("turn") if isinstance(response, dict) else None
+    turn_id = turn.get("id") if isinstance(turn, dict) else None
+    if not isinstance(turn_id, str) or not turn_id:
+        store.mark_app_writer_unknown(claim["id"], {
+            "thread_id": thread_id,
+            "reason": "Native turn/start returned no verifiable turn identity",
+        })
+        raise Fault(503, "Native workspace-write outcome is unknown; turn identity is missing")
+    store.set_app_writer_turn(claim["id"], thread_id, turn_id)
+    try:
+        thread = _thread(app, thread_id, True)
+    except Exception as exc:
+        store.mark_app_writer_unknown(claim["id"], {
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "reason": "Native thread/read after turn/start could not verify writer state",
+        })
+        raise Fault(503, "Native workspace-write outcome is unknown; no automatic replay") from exc
+    thread_status = _summary(thread)["status"]
+    if thread_status in ("active", "idle"):
+        _settle_app_writer_from_thread(store, thread)
+    else:
+        store.mark_app_writer_unknown(claim["id"], {
+            "thread_id": thread_id,
+            "turn_id": turn_id,
+            "reason": "Native thread/read returned unverifiable activity status",
+        })
+    return turn
+
+
+def _terminal_turn_for_claim(thread, claim):
+    if _summary(thread)["status"] != "idle" or not claim or not claim.get("turn_id"):
+        return None
+    turns = thread.get("turns")
+    if not isinstance(turns, list):
+        return None
+    for turn in turns:
+        if isinstance(turn, dict) and turn.get("id") == claim["turn_id"]:
+            status = _turn_status(turn)
+            if status in _TERMINAL_NATIVE_TURN_STATUSES:
+                return status
+    return None
+
+
+def _settle_app_writer_from_thread(store, thread):
+    claim = store.app_writer_claim_for_thread(thread.get("id"))
+    if claim is None:
+        return
+    terminal_status = _terminal_turn_for_claim(thread, claim)
+    if terminal_status is None:
+        if _summary(thread)["status"] == "idle":
+            store.mark_app_writer_unknown(claim["id"], {
+                "thread_id": claim.get("thread_id"),
+                "turn_id": claim.get("turn_id"),
+                "reason": "Native thread is idle without matching terminal turn evidence",
+            })
+        return
+    store.finish_app_writer(claim["id"], terminal_status, {
+        "thread_id": claim.get("thread_id"),
+        "turn_id": claim.get("turn_id"),
+        "terminal_status": terminal_status,
+        "source": "Native thread/read terminal turn",
+    })
+
+
 def _text_input(prompt):
     if not isinstance(prompt, str) or not prompt.strip():
         raise Fault(400, "prompt must be a non-empty string")
@@ -635,7 +744,12 @@ def create_thread(config, args, store=None):
             turn_params["effort"] = web_model["reasoning_effort"]
         elif isinstance(model, str) and model:
             turn_params["model"] = model
-        turn = app.call("turn/start", turn_params).get("turn", {})
+        if scope == "workspace-write":
+            turn = _start_workspace_write_turn(
+                app, store, config, project_id, project, thread["id"], turn_params,
+            )
+        else:
+            turn = app.call("turn/start", turn_params).get("turn", {})
         thread = _thread(app, thread["id"], False)
     return {
         "hostId": LOCAL_HOST_ID,
@@ -676,7 +790,13 @@ def fork_thread(config, args, store=None):
                 turn_params["effort"] = web_model["reasoning_effort"]
             elif isinstance(model, str) and model:
                 turn_params["model"] = model
-            turn_id = app.call("turn/start", turn_params).get("turn", {}).get("id")
+            if scope == "workspace-write":
+                turn = _start_workspace_write_turn(
+                    app, store, config, project_id, project, thread["id"], turn_params,
+                )
+                turn_id = turn["id"]
+            else:
+                turn_id = app.call("turn/start", turn_params).get("turn", {}).get("id")
         thread = _thread(app, thread["id"], False)
     return {"hostId": LOCAL_HOST_ID, "thread": _summary(thread), "turnId": turn_id}
 
@@ -686,26 +806,59 @@ def send_message_to_thread(config, args, store=None):
     prompt = args.get("prompt")
     with _session(config) as app:
         thread = _thread(app, args.get("threadId"), True)
-        _authorize_thread(config, thread, store)
+        project_id, project, scope = _authorize_thread(config, thread, store)
         web_model = _web_model(config, app, thread.get("model")) if config.get("_dispatch_origin") == "web" else None
         turns = thread.get("turns") if isinstance(thread.get("turns"), list) else []
         active = [turn for turn in turns if isinstance(turn, dict) and turn.get("status") == "inProgress" and isinstance(turn.get("id"), str)]
+        thread_status = _summary(thread)["status"]
+        if thread_status not in ("active", "idle"):
+            raise Fault(503, "Native Codex thread activity cannot be verified")
+        if (thread_status == "active") != bool(active):
+            raise Fault(409, "Native Codex thread status conflicts with its turn list")
         if active:
             if web_model is not None and thread.get("effort") != web_model["reasoning_effort"]:
                 raise Fault(409, "Cannot verify the active Native Codex Web reasoning effort")
-            turn_id = app.call("turn/steer", {
-                "threadId": thread["id"],
-                "expectedTurnId": active[-1]["id"],
-                "input": _text_input(prompt),
-            }).get("turnId")
+            claim = None
+            if scope == "workspace-write":
+                claim = store.app_writer_claim_for_thread(thread["id"]) if store is not None else None
+                if (claim is None or claim.get("state") != "running"
+                        or claim.get("turn_id") != active[-1]["id"]):
+                    raise Fault(409, "Active workspace-write turn has no matching durable owner")
+            try:
+                steer_result = app.call("turn/steer", {
+                    "threadId": thread["id"],
+                    "expectedTurnId": active[-1]["id"],
+                    "input": _text_input(prompt),
+                })
+                turn_id = steer_result.get("turnId") if isinstance(steer_result, dict) else None
+            except Exception as exc:
+                if claim is not None:
+                    store.mark_app_writer_unknown(claim["id"], {
+                        "thread_id": thread["id"], "turn_id": active[-1]["id"],
+                        "reason": "Native turn/steer outcome is ambiguous",
+                    })
+                    raise Fault(503, "Native workspace-write outcome is unknown; no automatic replay") from exc
+                raise
+            if claim is not None and turn_id != active[-1]["id"]:
+                store.mark_app_writer_unknown(claim["id"], {
+                    "thread_id": thread["id"], "turn_id": active[-1]["id"],
+                    "reason": "Native turn/steer did not confirm the claimed active turn",
+                })
+                raise Fault(503, "Native workspace-write outcome is unknown; turn identity changed")
             mode = "steer"
         else:
             turn_params = {"threadId": thread["id"], "input": _text_input(prompt)}
             if web_model is not None:
                 turn_params["model"] = web_model["model"]
                 turn_params["effort"] = web_model["reasoning_effort"]
-            result = app.call("turn/start", turn_params)
-            turn_id = result.get("turn", {}).get("id")
+            if scope == "workspace-write":
+                turn = _start_workspace_write_turn(
+                    app, store, config, project_id, project, thread["id"], turn_params,
+                )
+                turn_id = turn["id"]
+            else:
+                result = app.call("turn/start", turn_params)
+                turn_id = result.get("turn", {}).get("id")
             mode = "new_turn"
     return {"hostId": LOCAL_HOST_ID, "threadId": thread["id"], "turnId": turn_id, "mode": mode}
 
@@ -751,12 +904,19 @@ def wait_threads(config, args, store=None):
         while True:
             all_done = True
             for thread_id in ids:
-                thread = _thread(app, thread_id, False)
+                thread = _thread(app, thread_id, True)
                 _authorize_thread(config, thread, store)
                 summary = _summary(thread)
                 states[thread_id] = summary
                 if summary["status"] == "active":
                     all_done = False
+                elif summary["status"] == "idle":
+                    _settle_app_writer_from_thread(store, thread)
+                    unresolved = store.app_writer_claim_for_thread(thread_id) if store is not None else None
+                    if unresolved is not None:
+                        raise Fault(503, "Native App writer outcome remains unknown; keep the resource blocked")
+                else:
+                    raise Fault(503, "Native Codex thread activity cannot be verified")
             if all_done:
                 return {"hostId": LOCAL_HOST_ID, "completed": True, "timedOut": False, "threads": [states[item] for item in ids]}
             if time.monotonic() >= deadline:

@@ -5,6 +5,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -49,10 +50,53 @@ class Store:
         self.db.execute("""CREATE TABLE IF NOT EXISTS app_thread_scopes (
             thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
             cwd TEXT NOT NULL, scope TEXT NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS app_writer_claims (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, resource_id TEXT NOT NULL,
+            resource_project_ids TEXT NOT NULL, thread_id TEXT, turn_id TEXT,
+            state TEXT NOT NULL, evidence TEXT, created REAL NOT NULL, updated REAL NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS app_writer_claim_resources (
+            resource_key TEXT PRIMARY KEY, claim_id TEXT NOT NULL)""")
         self._migrate_columns()
         with self.db:
             self.db.execute("UPDATE jobs SET state='unknown',result=? WHERE kind='task' AND state IN ('running','cancelling')",
                             (encoded({"error": "Server restarted; recover in Codex before retrying"}),))
+            self.db.execute("UPDATE app_writer_claims SET state='unknown',evidence=?,updated=? WHERE state='running'",
+                            (encoded({"reason": "Bridge restarted; Native turn requires reconciliation"}), time.time()))
+
+    @contextmanager
+    def _immediate_transaction(self):
+        """Serialize resource ownership checks across Bridge processes."""
+        with self.lock:
+            if self.db.in_transaction:
+                yield
+                return
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except Exception:
+                self.db.rollback()
+                raise
+            else:
+                self.db.commit()
+
+    @staticmethod
+    def _writer_resource_keys(resource_id=None, project_id=None, resource_project_ids=None):
+        keys = set()
+        if isinstance(resource_id, str) and resource_id:
+            keys.add("resource:" + resource_id)
+        aliases = resource_project_ids if isinstance(resource_project_ids, (list, tuple, set)) else ()
+        for alias in aliases:
+            if isinstance(alias, str) and alias:
+                keys.add("project:" + alias)
+        if isinstance(project_id, str) and project_id:
+            keys.add("project:" + project_id)
+        return sorted(keys)
+
+    @classmethod
+    def _payload_resource_keys(cls, payload):
+        return cls._writer_resource_keys(
+            payload.get("resource_id"), payload.get("project_id"), payload.get("resource_project_ids"),
+        )
 
     def _migrate_columns(self):
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(jobs)")}
@@ -115,7 +159,7 @@ class Store:
         # The alias list is derived from host configuration, not user input.
         digest_payload.pop("resource_project_ids", None)
         digest = hashlib.sha256(encoded(digest_payload).encode()).hexdigest()
-        with self.lock, self.db:
+        with self._immediate_transaction():
             prior = self.db.execute("SELECT * FROM jobs WHERE kind=? AND request_key=?", (kind, key)).fetchone()
             if prior:
                 prior = self._decode(prior)
@@ -127,6 +171,17 @@ class Store:
                 # canonical resource. Read-only tasks are sandboxed and cannot
                 # be poisoned by uncertainty about another task's outcome.
                 if payload.get("scope") != "read-only":
+                    resource_keys = self._payload_resource_keys(payload)
+                    if resource_keys:
+                        placeholders = ",".join("?" for _ in resource_keys)
+                        app_claim = self.db.execute(
+                            f"SELECT c.id,c.state FROM app_writer_claim_resources r "
+                            f"JOIN app_writer_claims c ON c.id=r.claim_id "
+                            f"WHERE r.resource_key IN ({placeholders}) LIMIT 1",
+                            resource_keys,
+                        ).fetchone()
+                        if app_claim is not None:
+                            raise Fault(409, f"Workspace write blocked by App claim {app_claim['id']} ({app_claim['state']})")
                     rows = self.db.execute(
                         "SELECT id,payload FROM jobs WHERE kind='task' AND state='unknown'"
                     ).fetchall()
@@ -165,6 +220,8 @@ class Store:
         self.expire()
         if request_key is not None:
             text(request_key, "request_key", 200)
+        if kind == "task":
+            return self._claim_task()
         with self.lock, self.db:
             if kind == "backend" and request_key is not None:
                 prior = self.db.execute("SELECT * FROM jobs WHERE kind='backend' AND claim_key=? ORDER BY created DESC LIMIT 1", (request_key,)).fetchone()
@@ -186,6 +243,151 @@ class Store:
             if updated.rowcount != 1:
                 return None
             return self._decode(self.db.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
+
+    def _claim_task(self):
+        with self._immediate_transaction():
+            rows = self.db.execute(
+                "SELECT * FROM jobs WHERE kind='task' AND state='queued' ORDER BY created"
+            ).fetchall()
+            for row in rows:
+                payload = json.loads(row["payload"])
+                if payload.get("scope") != "read-only":
+                    resource_keys = self._payload_resource_keys(payload)
+                    if resource_keys:
+                        placeholders = ",".join("?" for _ in resource_keys)
+                        app_claim = self.db.execute(
+                            f"SELECT 1 FROM app_writer_claim_resources WHERE resource_key IN ({placeholders}) LIMIT 1",
+                            resource_keys,
+                        ).fetchone()
+                        if app_claim is not None:
+                            continue
+                        active = self.db.execute(
+                            "SELECT payload FROM jobs WHERE kind='task' "
+                            "AND state IN ('running','cancelling','unknown')"
+                        ).fetchall()
+                        if any(
+                            set(resource_keys).intersection(self._payload_resource_keys(json.loads(item["payload"])))
+                            and json.loads(item["payload"]).get("scope") != "read-only"
+                            for item in active
+                        ):
+                            continue
+                lease = secrets.token_urlsafe(24)
+                updated = self.db.execute(
+                    "UPDATE jobs SET state='running',lease=? WHERE id=? AND state='queued'",
+                    (lease, row["id"]),
+                )
+                if updated.rowcount == 1:
+                    return self._decode(self.db.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
+            return None
+
+    def acquire_app_writer(self, *, resource_id, project_id, resource_project_ids, thread_id):
+        if not isinstance(resource_id, str) or not resource_id:
+            raise Fault(409, "Canonical project resource cannot be verified for workspace-write")
+        if not isinstance(project_id, str) or not project_id:
+            raise Fault(409, "Project ownership cannot be verified for workspace-write")
+        if not isinstance(thread_id, str) or not thread_id:
+            raise Fault(409, "Native thread identity cannot be verified for workspace-write")
+        keys = self._writer_resource_keys(resource_id, project_id, resource_project_ids)
+        aliases = resource_project_ids if isinstance(resource_project_ids, (list, tuple, set)) else ()
+        aliases = sorted({alias for alias in aliases if isinstance(alias, str) and alias})
+        claim_id = "appwrite_" + uuid.uuid4().hex
+        now = time.time()
+        with self._immediate_transaction():
+            placeholders = ",".join("?" for _ in keys)
+            current = self.db.execute(
+                f"SELECT c.id,c.state FROM app_writer_claim_resources r "
+                f"JOIN app_writer_claims c ON c.id=r.claim_id "
+                f"WHERE r.resource_key IN ({placeholders}) LIMIT 1",
+                keys,
+            ).fetchone()
+            if current is not None:
+                raise Fault(409, f"Workspace write blocked by App claim {current['id']} ({current['state']})")
+            for row in self.db.execute(
+                "SELECT id,payload FROM jobs WHERE kind='task' AND state IN ('running','cancelling','unknown')"
+            ).fetchall():
+                payload = json.loads(row["payload"])
+                if (payload.get("scope") != "read-only"
+                        and set(keys).intersection(self._payload_resource_keys(payload))):
+                    raise Fault(409, f"Workspace write blocked by Core task {row['id']}")
+            self.db.execute(
+                "INSERT INTO app_writer_claims(id,project_id,resource_id,resource_project_ids,thread_id,state,created,updated) "
+                "VALUES(?,?,?,?,?,'running',?,?)",
+                (claim_id, project_id, resource_id, encoded(aliases), thread_id, now, now),
+            )
+            self.db.executemany(
+                "INSERT INTO app_writer_claim_resources(resource_key,claim_id) VALUES(?,?)",
+                [(resource_key, claim_id) for resource_key in keys],
+            )
+            return self._decode_app_writer(self.db.execute(
+                "SELECT * FROM app_writer_claims WHERE id=?", (claim_id,),
+            ).fetchone())
+
+    @staticmethod
+    def _decode_app_writer(row):
+        if row is None:
+            return None
+        result = dict(row)
+        if "resource_project_ids" in result:
+            result["resource_project_ids"] = json.loads(result["resource_project_ids"])
+        result["evidence"] = json.loads(result["evidence"]) if result.get("evidence") else None
+        return result
+
+    def app_writer_claim_for_thread(self, thread_id):
+        with self.lock:
+            row = self.db.execute(
+                "SELECT * FROM app_writer_claims WHERE thread_id=? AND state IN ('running','unknown') "
+                "ORDER BY created DESC LIMIT 1", (thread_id,),
+            ).fetchone()
+        return self._decode_app_writer(row)
+
+    def set_app_writer_turn(self, claim_id, thread_id, turn_id):
+        if not all(isinstance(value, str) and value for value in (thread_id, turn_id)):
+            raise Fault(400, "Native thread and turn identity are required")
+        with self._immediate_transaction():
+            row = self.db.execute("SELECT thread_id,turn_id,state FROM app_writer_claims WHERE id=?", (claim_id,)).fetchone()
+            if row is None:
+                raise Fault(404, "Unknown App writer claim")
+            if row["thread_id"] != thread_id or row["state"] not in ("running", "unknown"):
+                raise Fault(409, "App writer claim identity or state changed")
+            if row["turn_id"] is not None and row["turn_id"] != turn_id:
+                raise Fault(409, "App writer claim already belongs to another turn")
+            self.db.execute(
+                "UPDATE app_writer_claims SET thread_id=?,turn_id=?,updated=? WHERE id=? AND state IN ('running','unknown')",
+                (thread_id, turn_id, time.time(), claim_id),
+            )
+
+    def mark_app_writer_unknown(self, claim_id, evidence):
+        with self._immediate_transaction():
+            self.db.execute(
+                "UPDATE app_writer_claims SET state='unknown',evidence=?,updated=? WHERE id=?",
+                (encoded(evidence), time.time(), claim_id),
+            )
+
+    def finish_app_writer(self, claim_id, terminal_status, evidence):
+        if terminal_status not in ("completed", "failed", "interrupted", "cancelled"):
+            raise Fault(400, "App writer claim requires authoritative terminal status")
+        if not isinstance(evidence, dict) or evidence.get("terminal_status") != terminal_status:
+            raise Fault(409, "App writer claim release requires matching terminal evidence")
+        with self._immediate_transaction():
+            row = self.db.execute("SELECT id,thread_id,turn_id FROM app_writer_claims WHERE id=?", (claim_id,)).fetchone()
+            if row is None:
+                raise Fault(404, "Unknown App writer claim")
+            if (not row["turn_id"] or evidence.get("thread_id") != row["thread_id"]
+                    or evidence.get("turn_id") != row["turn_id"]):
+                raise Fault(409, "App writer claim release evidence does not match its Native turn")
+            self.db.execute(
+                "UPDATE app_writer_claims SET state=?,evidence=?,updated=? WHERE id=?",
+                (terminal_status, encoded(evidence), time.time(), claim_id),
+            )
+            self.db.execute("DELETE FROM app_writer_claim_resources WHERE claim_id=?", (claim_id,))
+
+    def unknown_app_writers(self):
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT id,project_id,resource_id,thread_id,turn_id,state,evidence,created,updated "
+                "FROM app_writer_claims WHERE state='unknown' ORDER BY created"
+            ).fetchall()
+        return [self._decode_app_writer(row) for row in rows]
 
     def finish_backend(self, job_id, body):
         fields(body, ("lease", "request_key"), ("answer", "calls"))
@@ -261,7 +463,12 @@ class Store:
                 "AND COALESCE(json_extract(payload,'$.scope'),'workspace-write')!='read-only' "
                 "ORDER BY project_id"
             ).fetchall()
-            return [row["project_id"] for row in rows if row["project_id"]]
+            projects = {row["project_id"] for row in rows if row["project_id"]}
+            app_rows = self.db.execute(
+                "SELECT DISTINCT project_id FROM app_writer_claims WHERE state='unknown'"
+            ).fetchall()
+            projects.update(row["project_id"] for row in app_rows if row["project_id"])
+            return sorted(projects)
 
     def unknown_tasks(self):
         with self.lock:

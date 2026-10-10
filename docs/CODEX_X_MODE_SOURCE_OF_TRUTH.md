@@ -40,6 +40,8 @@ Every Web-originated Codex X App app-server process must be separate from the lo
 
 Catalog selection and sending explicit turn parameters do not prove entitlement or terminal execution identity. Keep requested, selected, and per-turn observed model evidence distinct; missing or mismatched terminal evidence leaves the operation unverified and never triggers a fallback model.
 
+Core workspace-write tasks and Codex X App workspace-write turns share one SQLite resource-ownership boundary. Serialize claim checks with `BEGIN IMMEDIATE`; a Core task in running/cancelling/unknown state or an App claim in running/unknown state blocks another writer for the same canonical project root or alias. App turns acquire a durable claim before `turn/start`; timeouts, transport failures, restart, or unverified turn identity retain it as unknown. Release an App claim only after Native `thread/read` reports the thread idle and the exact claimed turn has an explicit terminal status. A cancellation request or idle thread without matching terminal-turn evidence does not release ownership. Unknown App writers remain visible in status and block Core/App writes until terminal evidence is recovered.
+
 ## Self-contained project boundary
 
 Codex X Mode runtime MUST NOT require another ChatGPT Plugin, external Tool, external Skill, or external MCP package as a product dependency.

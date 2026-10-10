@@ -50,6 +50,7 @@ def status(config, store):
         "projects": len(config.get("projects", {})),
         "unknown_projects": unknown,
         "unknown_tasks": store.unknown_tasks() if hasattr(store, "unknown_tasks") else [],
+        "unknown_app_writers": store.unknown_app_writers() if hasattr(store, "unknown_app_writers") else [],
         "readiness": {
             "mcp_transport": "available",
             "codex_runtime": "implemented_unverified",
