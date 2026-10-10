@@ -316,7 +316,7 @@ def list_models(config, required_prefix=None, *, native_isolated=False):
             backend="codex_app_server",
             native_isolated=native_isolated,
         )
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "1.0.0-rc.2"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "version": "1.0.0-rc.3"}})
         app.send({"method": "initialized", "params": {}})
         items = _model_catalog(app)
         if required_prefix is not None:
@@ -395,7 +395,7 @@ def run_task(config, store, job, stop=None):
             native_isolated=dispatch_origin == "web",
         )
         phase = "initialize"
-        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "1.0.0-rc.2"}})
+        app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "1.0.0-rc.3"}})
         app.send({"method": "initialized", "params": {}})
 
         if dispatch_origin == "web":
@@ -473,6 +473,7 @@ def run_task(config, store, job, stop=None):
                 final = params["turn"]
                 state = {"completed": "completed", "failed": "failed", "interrupted": "interrupted"}.get(final["status"], "unknown")
                 observed_model = final.get("model") if isinstance(final.get("model"), str) else None
+                observed_source = "turn/completed.turn.model" if observed_model is not None else None
                 # Recent Native app-server releases may omit model in
                 # turn/completed. Thread-level model is useful diagnostic
                 # provenance, but cannot attest to actual terminal inference.
@@ -487,19 +488,41 @@ def run_task(config, store, job, stop=None):
                         matched = [value for value in native_thread.get("turns", [])
                                    if isinstance(value, dict) and value.get("id") == turn["id"]]
                         if native_thread.get("id") == thread["id"] and len(matched) == 1:
+                            matching_turn = matched[0]
+                            readback_model = matching_turn.get("model")
+                            valid_turn_model = (
+                                isinstance(readback_model, str) and bool(readback_model)
+                                and matching_turn.get("status") == final["status"]
+                            )
+                            if valid_turn_model:
+                                observed_model = readback_model
+                                observed_source = "thread/read.turn.model"
                             thread_readback = {
                                 "source": "thread/read",
                                 "thread_model_matches_selected":
                                     native_thread.get("model") == selected_model["model"],
-                                "turn_status": matched[0].get("status"),
-                                "terminal_model_identity_verified": False,
+                                "turn_status": matching_turn.get("status"),
+                                "per_turn_model_present": valid_turn_model,
+                                "terminal_model_identity_verified":
+                                    valid_turn_model and readback_model == selected_model["model"]
+                                    and not model_reroutes,
                             }
                     except Exception as exc:
                         thread_readback = {"source": "thread/read",
                                            "readback_error_type": type(exc).__name__,
                                            "terminal_model_identity_verified": False}
-                model_verified = not model_reroutes and observed_model == selected_model["model"]
-                inference_verified = final["status"] == "completed" and model_verified
+                from .terminal_evidence import classify_native_terminal
+                verification = classify_native_terminal(
+                    selected_model=selected_model["model"],
+                    terminal_status=final["status"],
+                    reported_model=observed_model,
+                    reroutes=model_reroutes,
+                    thread_config_matches=None if thread_readback is None
+                        else thread_readback.get("thread_model_matches_selected"),
+                    model_proof_source=observed_source,
+                )
+                model_verified = verification["model_attestation"] == "verified"
+                inference_verified = verification["acceptance_verified"]
                 if not model_verified:
                     state = "unknown"
                 store.update_task(
@@ -510,6 +533,7 @@ def run_task(config, store, job, stop=None):
                         "observations": observations,
                         "codex_status": final["status"],
                         "terminal_error": final.get("error"),
+                        "execution_evidence": verification,
                         "model_selection": {
                             "backend": backend,
                             "dispatch_origin": dispatch_origin,

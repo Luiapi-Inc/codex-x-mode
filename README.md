@@ -37,3 +37,7 @@ See [Admin security evidence](docs/v1/G2_ADMIN_API_SECURITY_EVIDENCE.md).
 ## v1.0 RC2 — Native protocol capability (NO-GO)
 
 Use `cd server && python3 -m bridge native-protocol-check` to inspect the installed Codex app-server schema without requiring private bridge configuration or triggering inference. The installed CLI used in RC2 verification does **not** expose per-turn executed model identity through `turn/completed` or matching `thread/read.turn`; its thread-level `model` is only configuration metadata. RC2 therefore retains a strict `UNSUPPORTED` model-attestation gate, not a false PASS. See [RC2 protocol schema evidence](docs/v1/G3_RC2_PROTOCOL_SCHEMA_GATE.md).
+
+## v1.0 RC3 — Execution evidence and model attestation (NO-GO)
+
+The v1 RC3 bridge records the Native turn's terminal execution outcome separately from *proof of which model executed it*. A matching answer or configured thread model is not per-turn executed-model attestation. The installed Native CLI schema does not provide this telemetry. The G3 acceptance gate stays **UNSUPPORTED**, despite 171 passing tests and reproducible clean packaging. See [RC3 evidence](docs/v1/G3_RC3_TERMINAL_EVIDENCE_CONTRACT.md).

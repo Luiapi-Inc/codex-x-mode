@@ -117,6 +117,8 @@ class NativeModelModeTests(unittest.TestCase):
         self.assertEqual(model["id"], "gpt-6.1-sol")
         self.assertEqual(model["observed_model"], "gpt-6.1-sol")
         self.assertTrue(model["model_identity_verified"])
+        self.assertEqual(result["result"]["execution_evidence"]["native_execution"], "terminal_completed")
+        self.assertTrue(result["result"]["execution_evidence"]["acceptance_verified"])
         self.assertEqual(model["reroutes"], [])
 
         class NoTerminalModel(StubNative):
@@ -148,10 +150,87 @@ class NativeModelModeTests(unittest.TestCase):
         evidence = uncertain["result"]["model_selection"]
         self.assertFalse(evidence["model_identity_verified"])
         self.assertFalse(evidence["inference_verified"])
+        self.assertEqual(uncertain["result"]["execution_evidence"]["native_execution"], "terminal_completed")
+        self.assertEqual(uncertain["result"]["execution_evidence"]["reason"], "terminal_model_absent")
+        self.assertFalse(uncertain["result"]["execution_evidence"]["acceptance_verified"])
+        self.assertTrue(uncertain["result"]["execution_evidence"]["thread_configured_model_matches_selected"])
         self.assertIsNone(evidence["observed_model"])
         self.assertTrue(evidence["thread_readback"]["thread_model_matches_selected"])
         self.assertEqual(evidence["thread_readback"]["turn_status"], "completed")
         self.assertFalse(evidence["thread_readback"]["terminal_model_identity_verified"])
+
+        class FutureTurnModelReadback(NoTerminalModel):
+            def call(self, method, params):
+                if method == "thread/read":
+                    return {"thread": {
+                        "id": "native-thread", "model": self.started_model,
+                        "turns": [{"id": "native-turn", "status": "completed",
+                                   "model": self.started_model}],
+                    }}
+                return super().call(method, params)
+
+        with patch.object(service, "codex_list_models", return_value={
+            "models": native_models(), "catalog_source": "model/list",
+            "model_entitlement_verified": False
+        }):
+            future = service.create_task(self.config, self.store, {
+                "project_id": "demo", "prompt": "Future protocol readback",
+                "scope": "read-only", "request_key": "native-future-readback",
+            })
+        with patch.object(codex, "AppServer", FutureTurnModelReadback):
+            codex.run_task(self.config, self.store, self.store.claim("task"))
+        observed = self.store.get(future["id"])
+        self.assertEqual(observed["state"], "completed", observed.get("result"))
+        self.assertTrue(observed["result"]["model_selection"]["model_identity_verified"])
+        self.assertEqual(observed["result"]["execution_evidence"]["proof_source"],
+                         "thread/read.turn.model")
+        self.assertTrue(observed["result"]["execution_evidence"]["acceptance_verified"])
+
+        class MismatchedPerTurnModel(FutureTurnModelReadback):
+            def call(self, method, params):
+                if method == "thread/read":
+                    return {"thread": {"id": "native-thread", "model": self.started_model,
+                                       "turns": [{"id": "native-turn", "status": "completed",
+                                                  "model": "gpt-5.5"}]}}
+                return super().call(method, params)
+
+        with patch.object(service, "codex_list_models", return_value={
+            "models": native_models(), "catalog_source": "model/list",
+            "model_entitlement_verified": False
+        }):
+            mismatch_job = service.create_task(self.config, self.store, {
+                "project_id": "demo", "prompt": "Read only mismatch",
+                "scope": "read-only", "request_key": "native-mismatched-readback",
+            })
+        with patch.object(codex, "AppServer", MismatchedPerTurnModel):
+            codex.run_task(self.config, self.store, self.store.claim("task"))
+        mismatch_result = self.store.get(mismatch_job["id"])
+        self.assertEqual(mismatch_result["state"], "failed")
+        self.assertEqual(mismatch_result["result"]["execution_evidence"]["reason"],
+                         "terminal_model_mismatch")
+        self.assertFalse(mismatch_result["result"]["execution_evidence"]["acceptance_verified"])
+
+        class UnrelatedTurnModel(FutureTurnModelReadback):
+            def call(self, method, params):
+                if method == "thread/read":
+                    return {"thread": {"id": "native-thread", "model": self.started_model,
+                                       "turns": [{"id": "not-our-turn", "status": "completed",
+                                                  "model": self.started_model}]}}
+                return super().call(method, params)
+
+        with patch.object(service, "codex_list_models", return_value={
+            "models": native_models(), "catalog_source": "model/list",
+            "model_entitlement_verified": False
+        }):
+            unrelated = service.create_task(self.config, self.store, {
+                "project_id": "demo", "prompt": "Read only unrelated",
+                "scope": "read-only", "request_key": "native-unrelated-readback",
+            })
+        with patch.object(codex, "AppServer", UnrelatedTurnModel):
+            codex.run_task(self.config, self.store, self.store.claim("task"))
+        unrelated_result = self.store.get(unrelated["id"])
+        self.assertEqual(unrelated_result["state"], "failed")
+        self.assertFalse(unrelated_result["result"]["model_selection"]["model_identity_verified"])
 
     def test_v1_app_provider_selects_actual_native_executable_id_and_effort(self):
         class App:
