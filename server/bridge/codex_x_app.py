@@ -768,7 +768,7 @@ def fork_thread(config, args, store=None):
         params = {"threadId": thread_id, "modelProvider": "openai"}
         model = args.get("model")
         web_model = None
-        if config.get("_dispatch_origin") == "web" and ("prompt" in args or (isinstance(model, str) and model)):
+        if config.get("_dispatch_origin") == "web":
             web_model = _web_model(config, app, model if isinstance(model, str) and model else source.get("model"))
             model = web_model["model"]
         if isinstance(model, str) and model:

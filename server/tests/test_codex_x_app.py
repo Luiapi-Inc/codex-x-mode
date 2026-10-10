@@ -522,6 +522,52 @@ class CodexXAppContractTests(unittest.TestCase):
         self.assertEqual(turn["model"], model_id)
         self.assertEqual(turn["effort"], "high")
 
+    def test_web_fork_without_prompt_preserves_exact_native_web_model(self):
+        config = dict(self.config, _dispatch_origin="web")
+        root = config["projects"]["demo"]["cwd"]
+        model_id = "chatgpt-web/gpt-5.6-sol"
+        source = {
+            "id": "web-fork-source", "cwd": root, "model": model_id,
+            "modelProvider": "openai", "sandbox": "read-only",
+        }
+        fork = {**source, "id": "web-fork-result"}
+        fake = FakeApp({
+            "thread/read": [{"thread": source}, {"thread": fork}],
+            "model/list": {"data": [{
+                "id": model_id, "model": model_id, "isDefault": True,
+                "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                "defaultReasoningEffort": "high",
+            }]},
+            "thread/fork": {"thread": fork, "cwd": root, "sandbox": {"type": "readOnly"}},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            codex_x_app.fork_thread(config, {"threadId": source["id"]}, self.store)
+        fork_params = next(params for method, params in fake.calls if method == "thread/fork")
+        self.assertEqual(fork_params["model"], model_id)
+        self.assertIn("model/list", [method for method, _ in fake.calls])
+
+    def test_web_fork_without_prompt_rejects_non_web_parent(self):
+        config = dict(self.config, _dispatch_origin="web")
+        root = config["projects"]["demo"]["cwd"]
+        source = {
+            "id": "local-fork-source", "cwd": root, "model": "gpt-5.6-sol",
+            "modelProvider": "openai", "sandbox": "read-only",
+        }
+        model_id = "chatgpt-web/gpt-5.6-sol"
+        fake = FakeApp({
+            "thread/read": {"thread": source},
+            "model/list": {"data": [{
+                "id": model_id, "model": model_id, "isDefault": True,
+                "supportedReasoningEfforts": [{"reasoningEffort": "high"}],
+                "defaultReasoningEffort": "high",
+            }]},
+        })
+        with patch("bridge.codex_x_app._session", return_value=fake_session(fake)):
+            with self.assertRaises(Fault) as caught:
+                codex_x_app.fork_thread(config, {"threadId": source["id"]}, self.store)
+        self.assertEqual(caught.exception.status, 400)
+        self.assertNotIn("thread/fork", [method for method, _ in fake.calls])
+
     def test_created_thread_scope_survives_restart_when_native_read_omits_sandbox(self):
         root = self.config["projects"]["demo"]["cwd"]
         thread = {"id": "persisted", "cwd": root, "modelProvider": "openai"}

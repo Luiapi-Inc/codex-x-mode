@@ -1,0 +1,34 @@
+name: Codex X Mode verification
+
+on:
+  push:
+    branches:
+      - feat/xmode-v1-mcp-gateway-pr
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check whitespace
+        run: git diff --check HEAD^
+      - name: Compile Python sources
+        working-directory: server
+        run: python -m compileall -q bridge tests
+      - name: Run full unit test suite
+        working-directory: server
+        run: python -m unittest discover -s tests -q
+      - name: Verify reproducible runtime bundle
+        run: |
+          python server/scripts/build_bundle.py
+          git diff --exit-code -- assets/codex-x-mode-bridge.tar.gz
