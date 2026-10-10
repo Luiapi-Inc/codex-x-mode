@@ -66,7 +66,7 @@ class ClientIntegrationTests(unittest.TestCase):
         for version in (*LEGACY_VERSIONS, MODERN_VERSION):
             with self.subTest(version=version), self.http(version) as client:
                 report = client.doctor()
-                self.assertEqual(len(report["tools"]), 13)
+                self.assertEqual(len(report["tools"]), 14)
                 self.assertEqual(len(report["resources"]), 2)
                 self.assertEqual(len(report["prompts"]), 2)
                 self.assertEqual(report["projects"]["projects"][0]["id"], "demo")
@@ -85,7 +85,7 @@ class ClientIntegrationTests(unittest.TestCase):
                     str(self.config_path), "mcp-stdio"], version=version)
                 with client:
                     report = client.doctor()
-                    self.assertEqual(len(report["tools"]), 13)
+                    self.assertEqual(len(report["tools"]), 14)
                     value = self.value(client, "codex_x_read_project_file",
                                        {"project_id": "demo", "path": "hello.txt"})
                     self.assertEqual(value["content"], "hello client\n")
@@ -105,7 +105,7 @@ class ClientIntegrationTests(unittest.TestCase):
             result = subprocess.run(base + args, env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn(self.config["mcp_key"], result.stdout + result.stderr)
-            self.assertEqual(len(json.loads(result.stdout)["tools"]), 13)
+            self.assertEqual(len(json.loads(result.stdout)["tools"]), 14)
         self.assertEqual(self.store.db.execute("SELECT count(*) FROM jobs").fetchone()[0], 0)
 
     def test_invalid_http_protocol_rejected(self):
@@ -135,7 +135,7 @@ class ClientIntegrationTests(unittest.TestCase):
             result = subprocess.run([sys.executable, "-B", "-m", "bridge.client", "--url", url],
                 env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(json.loads(result.stdout)["tools"]), 13)
+            self.assertEqual(len(json.loads(result.stdout)["tools"]), 14)
             with patch.dict(os.environ, {"SSL_CERT_FILE": str(self.root / "missing-ca.pem")}):
                 with MCPClient(url=url, token=self.config["mcp_key"]) as client:
                     with self.assertRaises(ClientError):

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from .core import Fault, encoded
 from .policy import permitted_tool_names
+from .serena_adapter import TOOLS as SERENA_TOOLS, MAP as SERENA_MAP, enabled as serena_enabled, call_tool as call_serena_tool
 from .codex_x_app import SERVER_INFO as CODEX_X_APP_SERVER_INFO, TOOLS as CODEX_X_APP_TOOLS, call_tool as call_codex_x_app_tool
 from .service import (
     cancel_backend,
@@ -22,7 +23,7 @@ from .service import (
 )
 
 
-SERVER_INFO = {"name": "codex-x-mode", "version": "1.0.0-rc.3"}
+SERVER_INFO = {"name": "codex-x-mode", "version": "1.0.0-rc.4"}
 MODERN_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 SUPPORTED_VERSIONS = (MODERN_VERSION, *LEGACY_VERSIONS)
@@ -84,6 +85,20 @@ TOOLS = [
                 "max_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576, "default": 262144},
             },
             ["project_id", "path"],
+        ),
+        "annotations": {"readOnlyHint": True, "destructiveHint": False},
+    },
+    {
+        "name": "codex_x_preview_project_edit",
+        "description": "Create a bounded read-only unified diff for an existing project file; requires an exact current SHA-256 digest and never writes.",
+        "inputSchema": _schema(
+            {
+                "project_id": {"type": "string"},
+                "path": {"type": "string"},
+                "new_content": {"type": "string"},
+                "expected_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "max_diff_bytes": {"type": "integer", "minimum": 1, "maximum": 262144, "default": 131072},
+            }, ["project_id", "path", "new_content", "expected_sha256"]
         ),
         "annotations": {"readOnlyHint": True, "destructiveHint": False},
     },
@@ -218,10 +233,13 @@ def _tool_result(value, is_error=False, surface="codex_x"):
 
 
 def _call_tool(name, args, config, store):
-    if name not in TOOL_MAP:
+    if name not in TOOL_MAP and name not in SERENA_MAP:
         raise Fault(404, "Unknown tool")
     if not isinstance(args, dict):
         raise Fault(400, "Tool arguments must be an object")
+    if name in SERENA_MAP:
+        return call_serena_tool(config, args.get("project_id"), SERENA_MAP[name],
+                                {k: v for k, v in args.items() if k != "project_id"}, store=store)
     if name == "codex_x_status":
         return status(config, store)
     if name == "codex_x_list_projects":
@@ -232,6 +250,11 @@ def _call_tool(name, args, config, store):
         return list_project_directory(config, args.get("project_id"), args.get("path", "."), args.get("limit", 200))
     if name == "codex_x_read_project_file":
         return read_project_file(config, args.get("project_id"), args.get("path"), args.get("max_bytes", 262144))
+    if name == "codex_x_preview_project_edit":
+        from .workspace_direct import preview_edit
+        return preview_edit(config, args.get("project_id"), args.get("path"),
+                            args.get("new_content"), expected_sha256=args.get("expected_sha256"),
+                            max_diff_bytes=args.get("max_diff_bytes", 131072))
     if name == "codex_x_create_task":
         return create_task(config, store, args)
     if name == "codex_x_read_task":
@@ -258,7 +281,7 @@ def _call_tool(name, args, config, store):
 
 
 def _call_unified_tool(name, args, config, store):
-    if name in TOOL_MAP:
+    if name in TOOL_MAP or name in SERENA_MAP:
         return _call_tool(name, args, config, store)
     original = UNIFIED_APP_TOOL_MAP.get(name)
     if original is None:
@@ -311,15 +334,22 @@ def handle_rpc(request, config, store, legacy_state=None, surface="codex_x"):
         raise RpcError(-32602, "Invalid params")
 
     server_info = CODEX_X_APP_SERVER_INFO if surface == "codex_x_app" else SERVER_INFO
-    tools = (UNIFIED_TOOLS if surface == "unified"
-             else CODEX_X_APP_TOOLS if surface == "codex_x_app" else TOOLS)
+    tools = list(UNIFIED_TOOLS if surface == "unified"
+                 else CODEX_X_APP_TOOLS if surface == "codex_x_app" else TOOLS)
+    if surface != "codex_x_app" and serena_enabled(config):
+        from .serena_adapter import SAFE_READ, SUPPORTED_WRITE
+        writable = (config.get("serena", {}).get("allow_mutations") is True
+                    and config.get("mcp_policy", {}).get("mode") == "explicit")
+        exposed = SAFE_READ | (SUPPORTED_WRITE if writable else frozenset())
+        tools.extend(tool for tool in SERENA_TOOLS
+                     if tool["name"].removeprefix("codex_x_serena_") in exposed)
     resources = [] if surface == "codex_x_app" else RESOURCES
     prompts = [] if surface == "codex_x_app" else PROMPTS
 
     # Discoverability is not mutation permission. Resolve policy separately
     # for every RPC invocation to prevent stale tools/list from granting calls.
     try:
-        allowed = permitted_tool_names(config, tools, catalog=(*UNIFIED_TOOLS, *CODEX_X_APP_TOOLS))
+        allowed = permitted_tool_names(config, tools, catalog=(*UNIFIED_TOOLS, *CODEX_X_APP_TOOLS, *SERENA_TOOLS))
     except Fault as exc:
         raise RpcError(-32003, str(exc)) from exc
 
@@ -354,6 +384,8 @@ def handle_rpc(request, config, store, legacy_state=None, surface="codex_x"):
         name = params.get("name")
         args = params["arguments"] if "arguments" in params else {}
         if name not in {item["name"] for item in tools}:
+            if name in SERENA_MAP:
+                return request_id, _tool_result({"error": {"status": 403, "message": "Serena tool not enabled"}}, True, surface)
             return request_id, _tool_result({"error": {"status": 404, "message": "Unknown tool"}}, True, surface)
         if name not in allowed:
             return request_id, _tool_result({"error": {"status": 403, "message": "MCP tool not permitted"}}, True, surface)

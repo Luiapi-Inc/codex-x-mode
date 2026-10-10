@@ -85,7 +85,8 @@ class CodexXAppContractTests(unittest.TestCase):
         listed = rpc_response({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
                               self.config, self.store, state)
         names = [tool["name"] for tool in listed["result"]["tools"]]
-        self.assertEqual(len(names), 13)
+        self.assertEqual(len(names), 14)
+        self.assertIn("codex_x_preview_project_edit", names)
         self.assertTrue(all(name.startswith("codex_x_") for name in names))
 
     def test_native_env_drops_custom_provider_credentials(self):

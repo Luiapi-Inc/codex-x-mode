@@ -81,6 +81,8 @@ def main():
                   "config_schema_version": 1,
                   "mcp_policy": {"mode": "read-only"}, "allowed_origins": [],
                   "web_model_policy": "native",
+                  "serena": {"enabled": False, "context": "chatgpt",
+                             "allow_mutations": False, "timeout_seconds": 45},
                   }
         if args.model_version is not None:
             config["chatgpt_web_default_model"] = args.model_version

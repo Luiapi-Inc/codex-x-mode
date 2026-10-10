@@ -41,3 +41,7 @@ Use `cd server && python3 -m bridge native-protocol-check` to inspect the instal
 ## v1.0 RC3 — Execution evidence and model attestation (NO-GO)
 
 The v1 RC3 bridge records the Native turn's terminal execution outcome separately from *proof of which model executed it*. A matching answer or configured thread model is not per-turn executed-model attestation. The installed Native CLI schema does not provide this telemetry. The G3 acceptance gate stays **UNSUPPORTED**, despite 171 passing tests and reproducible clean packaging. See [RC3 evidence](docs/v1/G3_RC3_TERMINAL_EVIDENCE_CONTRACT.md).
+
+## v1.0 RC4 — Serena ChatGPT context (development only)
+
+G4 pins the built-in Serena context `chatgpt`. The real upstream catalog contains 29 tools; 13 read-only and 11 guarded edit/memory operations have gateway contracts. Five higher-risk operations remain blocked. New setups default to `serena.context=chatgpt`, `serena.enabled=false`, `serena.allow_mutations=false`. Read-only Serena uses a temporary project mirror so language-server cache cannot alter source. See [G4 RC4 evidence](docs/v1/G4_RC4_SERENA_CHATGPT_INTEGRATION.md).

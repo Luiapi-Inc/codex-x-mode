@@ -83,19 +83,20 @@ class UnifiedMcpContractTests(unittest.TestCase):
             thread.join(timeout=3)
             server.server_close()
 
-    def test_one_surface_has_all_21_namespaced_tools(self):
+    def test_one_surface_has_all_22_namespaced_tools(self):
         response = rpc_response(rpc("tools/list"), self.config, self.store,
                                 {"version": "2025-11-25"}, "unified")
         tools = response["result"]["tools"]
         names = [tool["name"] for tool in tools]
-        self.assertEqual(len(names), 21)
+        self.assertEqual(len(names), 22)
+        self.assertIn("codex_x_preview_project_edit", names)
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(sum(name.startswith("codex_x_app_") for name in names), 8)
         self.assertIn("codex_x_status", names)
         self.assertIn("codex_x_app_list_threads", names)
         self.assertNotIn("list_threads", names)
         self.assertEqual(len(rpc_response(rpc("tools/list"), self.config, self.store,
-                                          {"version": "2025-11-25"}, "codex_x")["result"]["tools"]), 13)
+                                          {"version": "2025-11-25"}, "codex_x")["result"]["tools"]), 14)
         self.assertEqual(len(rpc_response(rpc("tools/list"), self.config, self.store,
                                           {"version": "2025-11-25"}, "codex_x_app")["result"]["tools"]), 8)
 
@@ -124,7 +125,7 @@ class UnifiedMcpContractTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            for path, count in (("/mode/mcp", 21), ("/mcp", 13), ("/app/mcp", 8)):
+            for path, count in (("/mode/mcp", 22), ("/mcp", 14), ("/app/mcp", 8)):
                 body = json.dumps(rpc("tools/list")).encode("utf-8")
                 conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
                 conn.request("POST", path, body, {

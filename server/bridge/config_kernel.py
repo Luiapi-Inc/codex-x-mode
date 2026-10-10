@@ -24,7 +24,7 @@ class ConfigFault(Exception):
         self.status = status
 
 
-_MUTABLE = frozenset({"mcp_policy", "allowed_origins", "projects", "web_model_policy"})
+_MUTABLE = frozenset({"mcp_policy", "allowed_origins", "projects", "web_model_policy", "serena"})
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -81,6 +81,13 @@ class ConfigKernel:
 
     @staticmethod
     def _validate(next_config):
+        if "serena" in next_config:
+            from .serena_adapter import _settings
+            from .core import Fault
+            try:
+                _settings(next_config)
+            except Fault as exc:
+                raise ConfigFault(400, "Invalid Serena context/provider configuration") from exc
         if next_config.get("config_schema_version") == 1 and "mcp_policy" not in next_config:
             raise ConfigFault(400, "v1 requires an MCP capability policy")
         if "web_model_policy" in next_config and next_config["web_model_policy"] not in ("native", "legacy-prefixed"):
