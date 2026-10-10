@@ -9,7 +9,6 @@ import threading
 import time
 
 from .core import project_config
-from . import siwc
 
 
 class TaskCancelled(Exception):
@@ -147,38 +146,7 @@ def _isolated_native_codex_env(config):
     return env, isolated.cleanup
 
 
-def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_app_server", credentials=None, native_isolated=False):
-    if backend in ("chatgpt_web_headless", "chatgpt_plan"):
-        # Legacy persisted-task compatibility only. New Web tasks must never
-        # select these subscription-sharing/custom-provider backends.
-        if credentials is None:
-            raise siwc.SiwcError("Sign in with ChatGPT authorization is required")
-        env = dict(os.environ)
-        for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_BRIDGE_PROVIDER_KEY", "ACCESS_TOKEN"):
-            env.pop(key, None)
-        env["ACCESS_TOKEN"] = credentials["access_token"]
-        codex_home = tempfile.TemporaryDirectory(prefix="codex-x-legacy-web-app-server-")
-        env["CODEX_HOME"] = codex_home.name
-        command = config["codex_command"] + ["app-server", "--listen", "stdio://"]
-        settings = {
-            "model_provider": '"openai_chatgpt_web_headless"',
-            "model_providers.openai_chatgpt_web_headless.name": '"ChatGPT Web headless"',
-            "model_providers.openai_chatgpt_web_headless.base_url": '"https://api.openai.com/v1"',
-            "model_providers.openai_chatgpt_web_headless.env_key": '"ACCESS_TOKEN"',
-            "model_providers.openai_chatgpt_web_headless.wire_api": '"responses"',
-            "model_providers.openai_chatgpt_web_headless.requires_openai_auth": "false",
-            "model_providers.openai_chatgpt_web_headless.supports_websockets": "false",
-            "model_providers.openai_chatgpt_web_headless.request_max_retries": "0",
-            "model_providers.openai_chatgpt_web_headless.stream_max_retries": "0",
-            "shell_environment_policy": '{inherit="core",ignore_default_excludes=false,filters={ACCESS_TOKEN="exclude"},set={},experimental_use_profile=false}',
-        }
-        for key, value in settings.items():
-            command.extend(["-c", key + "=" + value])
-        try:
-            return AppServer(command, timeout, stop, cancel, env=env, cleanup=codex_home.cleanup)
-        except Exception:
-            codex_home.cleanup()
-            raise
+def _app_server(config, timeout=600, stop=None, cancel=None, *, backend="codex_app_server", native_isolated=False):
     if backend != "codex_app_server":
         raise ModelSelectionError("Task execution backend is invalid")
 
@@ -267,8 +235,8 @@ def _select_model(models, requested=None, *, required_prefix=None, default_model
         effort = supported[0]
     if effort is not None and supported and effort not in supported:
         raise ModelSelectionError("Selected model does not support the requested reasoning effort")
-    if required_prefix is not None and not effort:
-        raise ModelSelectionError("Selected Web model has no unambiguous reasoning effort")
+    if required_prefix is not None and (not effort or effort not in supported):
+        raise ModelSelectionError("Selected Web reasoning effort is not verified by Native Codex metadata")
     return {
         "id": selected["id"],
         "model": selected["model"],
@@ -326,29 +294,12 @@ def list_models(config, required_prefix=None, *, native_isolated=False):
             app.close()
 
 
-def _redact_tokens(value, credentials):
-    if credentials is None:
-        return value
-    if isinstance(value, str):
-        for key in ("access_token", "refresh_token", "id_token"):
-            token = credentials.get(key)
-            if isinstance(token, str) and token:
-                value = value.replace(token, "[REDACTED]")
-        return value
-    if isinstance(value, list):
-        return [_redact_tokens(item, credentials) for item in value]
-    if isinstance(value, dict):
-        return {key: _redact_tokens(item, credentials) for key, item in value.items()}
-    return value
-
-
 def run_task(config, store, job, stop=None):
     app = None
     phase = "load_task"
     turn_start_attempted = False
     selected_model = None
     model_reroutes = []
-    credentials = None
     try:
         payload = job["payload"]
         backend = payload.get("execution_backend", "codex_app_server")
@@ -361,72 +312,34 @@ def run_task(config, store, job, stop=None):
         phase = "validate_project"
         project = project_config(config, payload["project_id"], payload["scope"])
 
-        legacy_web_backend = backend in ("chatgpt_web_headless", "chatgpt_plan")
-        if legacy_web_backend:
-            # Compatibility path for already-persisted pre-v0.2.20 jobs only.
-            phase = "legacy_chatgpt_web_authorization"
-            credentials = siwc.get_credentials(config)
-            if payload.get("siwc_registration") != siwc.registration(credentials):
-                raise siwc.SiwcError("Task account registration no longer matches the authorized account")
-            phase = "legacy_account_model_catalog"
-            account_catalog = siwc.list_models(config, credentials=credentials)
-            snapshot = payload.get("selected_model")
-            if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
-                raise siwc.SiwcError("Legacy ChatGPT Web task has no validated model selection")
-            if backend == "chatgpt_web_headless":
-                alias = snapshot["id"]
-                if not alias.startswith("chatgpt-web/") or not isinstance(snapshot.get("model"), str):
-                    raise siwc.SiwcError("Legacy ChatGPT Web task has an invalid route model")
-                account_selected = siwc.select_model(account_catalog, snapshot["model"])
-            else:
-                account_selected = siwc.select_model(account_catalog, snapshot["id"])
-            if account_selected["model"] != snapshot.get("model"):
-                raise siwc.SiwcError("Legacy task model selection no longer matches the authorized account catalog")
-            selected_model = dict(account_selected)
-            selected_model["id"] = snapshot["id"]
-            selected_model["source"] = snapshot.get("source", "requested")
-            selected_model["reasoning_effort"] = snapshot.get("reasoning_effort")
-        elif backend == "codex_app_server":
-            if dispatch_origin == "web":
-                snapshot = payload.get("selected_model")
-                if (not isinstance(snapshot, dict)
-                        or not isinstance(snapshot.get("id"), str)
-                        or not snapshot["id"].startswith("chatgpt-web/")
-                        or snapshot.get("model") != snapshot["id"]):
-                    raise ModelSelectionError("Web task has no validated Native Codex model selection")
-                selected_model = dict(snapshot)
-        else:
+        if backend in ("chatgpt_web_headless", "chatgpt_plan"):
+            phase = "reject_legacy_web_route"
+            raise ModelSelectionError("Legacy Web provider routes are disabled; reconcile and resubmit through Native Codex")
+        if backend != "codex_app_server":
+            phase = "validate_backend"
             raise ModelSelectionError("Task execution backend is invalid")
+        if dispatch_origin == "web":
+            snapshot = payload.get("selected_model")
+            if (not isinstance(snapshot, dict)
+                    or not isinstance(snapshot.get("id"), str)
+                    or not snapshot["id"].startswith("chatgpt-web/")
+                    or snapshot.get("model") != snapshot["id"]):
+                raise ModelSelectionError("Web task has no validated Native Codex model selection")
+            selected_model = dict(snapshot)
 
         phase = "launch_app_server"
         launch_args = (config, config.get("task_timeout_seconds", 600), stop,
                        lambda: store.cancel_requested(job["id"]))
-        if legacy_web_backend:
-            app = _app_server(*launch_args, backend=backend, credentials=credentials)
-        else:
-            app = _app_server(
-                *launch_args,
-                backend="codex_app_server",
-                native_isolated=dispatch_origin == "web",
-            )
+        app = _app_server(
+            *launch_args,
+            backend="codex_app_server",
+            native_isolated=dispatch_origin == "web",
+        )
         phase = "initialize"
         app.call("initialize", {"clientInfo": {"name": "codex_x_mode", "title": "Codex X Mode", "version": "0.2.12"}})
         app.send({"method": "initialized", "params": {}})
 
-        if legacy_web_backend:
-            if backend == "chatgpt_web_headless":
-                phase = "legacy_native_model_catalog"
-                runtime_model = _select_model(
-                    _model_catalog(app),
-                    selected_model["model"],
-                    reasoning_effort=selected_model.get("reasoning_effort"),
-                )
-                if runtime_model["model"] != selected_model["model"]:
-                    raise ModelSelectionError("Legacy Web model no longer matches the Native Codex catalog")
-                selected_model["reasoning_effort"] = runtime_model.get("reasoning_effort")
-                selected_model["default_reasoning_effort"] = runtime_model.get("default_reasoning_effort")
-                selected_model["supported_reasoning_efforts"] = runtime_model.get("supported_reasoning_efforts", [])
-        elif dispatch_origin == "web":
+        if dispatch_origin == "web":
             phase = "native_model_catalog"
             runtime_model = _select_model(
                 _model_catalog(app),
@@ -449,8 +362,6 @@ def run_task(config, store, job, stop=None):
             "sandbox": "read-only" if payload["scope"] == "read-only" else "workspace-write",
             "model": selected_model["model"],
         }
-        if legacy_web_backend:
-            thread_params["modelProvider"] = "openai_chatgpt_web_headless"
         parent_id = payload.get("parent_task_id")
         if parent_id:
             thread_params["threadId"] = store.get(parent_id, "task")["thread_id"]
@@ -507,7 +418,7 @@ def run_task(config, store, job, stop=None):
                 store.update_task(
                     job["id"],
                     state=state,
-                    result=_redact_tokens({
+                    result={
                         "answer": answer,
                         "observations": observations,
                         "codex_status": final["status"],
@@ -515,7 +426,7 @@ def run_task(config, store, job, stop=None):
                         "model_selection": {
                             "backend": backend,
                             "dispatch_origin": dispatch_origin,
-                            "catalog_source": "responses_api_models" if legacy_web_backend else "model/list",
+                            "catalog_source": "model/list",
                             "id": selected_model["id"],
                             "model": selected_model["model"],
                             "source": selected_model["source"],
@@ -527,9 +438,9 @@ def run_task(config, store, job, stop=None):
                             "reroutes": model_reroutes,
                             "model_identity_verified": model_verified,
                             "inference_verified": inference_verified,
-                            "native_codex_owns_inference": not legacy_web_backend,
+                            "native_codex_owns_inference": True,
                         },
-                    }, credentials),
+                    },
                 )
                 phase = "terminal_event_verified"
                 break
@@ -539,7 +450,7 @@ def run_task(config, store, job, stop=None):
             "failure_phase": phase,
             "execution_may_have_started": turn_start_attempted,
         })
-    except (ModelSelectionError, siwc.SiwcError) as exc:
+    except ModelSelectionError as exc:
         store.update_task(job["id"], state="failed", result={
             "error": str(exc),
             "failure_phase": phase,

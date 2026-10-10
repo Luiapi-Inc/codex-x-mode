@@ -165,6 +165,23 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 400)
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
 
+    def test_web_effort_override_requires_native_supported_effort_metadata(self):
+        incomplete = dict(NATIVE_CATALOG)
+        incomplete["models"] = [{
+            "id": "chatgpt-web/gpt-5.6-sol",
+            "model": "chatgpt-web/gpt-5.6-sol",
+            "display_name": "GPT-5.6 Sol",
+            "is_default": True,
+            "default_reasoning_effort": "high",
+            "supported_reasoning_efforts": [],
+        }]
+        self.native_catalog_mock.return_value = incomplete
+        invalid = dict(self.config, chatgpt_web_reasoning_effort="max")
+        with self.assertRaises(Fault) as caught:
+            create_task(invalid, self.store, self.body(model_version="chatgpt-web/gpt-5.6-sol"))
+        self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+
     def test_retry_recovers_same_job_before_native_catalog_changes(self):
         body = self.body()
         job = create_task(self.config, self.store, body)
@@ -378,6 +395,26 @@ class NativeCodexWebDispatchTests(unittest.TestCase):
         with self.assertRaises(Fault) as caught:
             create_task(self.config, self.store, self.body(execution_backend="chatgpt_plan"))
         self.assertEqual(caught.exception.status, 400)
+
+    def test_persisted_legacy_web_routes_fail_closed_without_provider_execution(self):
+        for backend in ("chatgpt_plan", "chatgpt_web_headless"):
+            with self.subTest(backend=backend):
+                job = self.store.create("task", {
+                    "project_id": "demo",
+                    "prompt": "Existing queued work",
+                    "scope": "read-only",
+                    "dispatch_origin": "web",
+                    "execution_backend": backend,
+                }, "legacy-" + backend)
+                claimed = self.store.claim("task")
+                with patch.object(siwc, "get_credentials", side_effect=AssertionError("legacy provider must not run")) as get_credentials, \
+                     patch.object(codex, "_app_server", side_effect=AssertionError("app-server must not launch")) as app_server:
+                    codex.run_task(self.config, self.store, claimed)
+                get_credentials.assert_not_called()
+                app_server.assert_not_called()
+                result = self.store.get(job["id"])
+                self.assertEqual(result["state"], "failed")
+                self.assertEqual(result["result"]["failure_phase"], "reject_legacy_web_route")
 
 
 if __name__ == "__main__":
