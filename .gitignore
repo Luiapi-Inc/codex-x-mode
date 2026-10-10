@@ -12,3 +12,8 @@ bridge-private.json
 .env.*
 !.env.example
 codex-x-mode-v*-update.zip
+
+# codex-workflow-managed-start
+codex_workflow
+.codex_workflow_hidden_resources/
+# codex-workflow-managed-end
