@@ -134,10 +134,11 @@ class CodexXAppContractTests(unittest.TestCase):
         created = []
 
         class Managed:
-            def __init__(self, command, *, env, timeout=60):
+            def __init__(self, command, *, env, timeout=60, cleanup=None):
                 self.command = tuple(command)
                 self.env = dict(env)
                 self.timeout = timeout
+                self.cleanup = cleanup
                 self.calls = []
                 self.sent = []
                 self.closed = False
@@ -155,6 +156,10 @@ class CodexXAppContractTests(unittest.TestCase):
 
             def close(self):
                 self.closed = True
+                if self.cleanup is not None:
+                    self.cleanup()
+                    self.cleanup = None
+                return True
 
         with patch("bridge.codex_x_app._ManagedNativeApp", Managed):
             first = codex_x_app._managed_app(self.config)
@@ -165,6 +170,168 @@ class CodexXAppContractTests(unittest.TestCase):
         self.assertEqual(list(created[0].command[-2:]), ["app-server", "--stdio"])
         self.assertEqual([call[0] for call in created[0].calls], ["initialize"])
         self.assertEqual(created[0].sent, [{"method": "initialized", "params": {}}])
+
+    def test_web_managed_app_has_separate_isolated_profile_and_cleans_up_on_shutdown(self):
+        created = []
+        cleanups = []
+        native_threads = []
+
+        class Managed:
+            def __init__(self, command, *, env, timeout=60, cleanup=None):
+                self.command = tuple(command)
+                self.env = dict(env)
+                self.cleanup = cleanup
+                self.closed = False
+                self.active_sessions = 0
+                created.append(self)
+
+            def call(self, method, params, timeout=None):
+                if method == "thread/list":
+                    return {"data": list(native_threads)}
+                return {}
+
+            def send(self, message):
+                pass
+
+            def healthy(self):
+                return not self.closed
+
+            def has_active_threads(self):
+                for thread in native_threads:
+                    status = thread.get("status", {}).get("type")
+                    if status == "active":
+                        return True
+                    if status != "idle":
+                        raise Fault(503, "Native Codex thread activity cannot be verified")
+                return False
+
+            def close(self):
+                self.closed = True
+                if self.cleanup is not None:
+                    self.cleanup()
+                    self.cleanup = None
+                return True
+
+        def isolated_env(config):
+            return ({"PATH": "/bin", "CODEX_HOME": "/tmp/codex-x-web-home"},
+                    lambda: cleanups.append("web-home-removed"))
+
+        local_config = dict(self.config, _dispatch_origin="local")
+        auth_source = Path(self.tmp.name) / "auth.json"
+        auth_source.write_text("{}", encoding="utf-8")
+        web_config = dict(self.config, _dispatch_origin="web", native_codex_home=self.tmp.name)
+        with patch("bridge.codex_x_app._ManagedNativeApp", Managed), \
+             patch("bridge.codex_x_app._isolated_native_codex_env", side_effect=isolated_env):
+            local_first = codex_x_app._managed_app(local_config)
+            local_second = codex_x_app._managed_app(local_config)
+            web_first = codex_x_app._managed_app(web_config)
+            web_second = codex_x_app._managed_app(web_config)
+
+            self.assertIs(local_first, local_second)
+            self.assertIs(web_first, web_second)
+            self.assertIsNot(local_first, web_first)
+            self.assertEqual(local_first.env, codex_x_app._native_env())
+            self.assertEqual(web_first.env["CODEX_HOME"], "/tmp/codex-x-web-home")
+            self.assertEqual(cleanups, [])
+
+            auth_source.write_text('{"credential_revision":2}', encoding="utf-8")
+            native_threads.append({"id": "active-web-thread", "status": {"type": "active"}})
+            with self.assertRaises(Fault):
+                codex_x_app._managed_app(web_config)
+            self.assertEqual(cleanups, [])
+
+            native_threads[:] = [{"id": "unknown-web-thread", "status": {"type": "unknown"}}]
+            with self.assertRaises(Fault):
+                codex_x_app._managed_app(web_config)
+            self.assertEqual(cleanups, [])
+
+            native_threads.clear()
+            refreshed_web = codex_x_app._managed_app(web_config)
+            self.assertIsNot(refreshed_web, web_first)
+            self.assertEqual(cleanups, ["web-home-removed"])
+
+            codex_x_app._shutdown_managed_app()
+
+        self.assertEqual(len(created), 3)
+        self.assertEqual(cleanups, ["web-home-removed", "web-home-removed"])
+
+    def test_managed_app_cleanup_waits_for_confirmed_process_stop(self):
+        class Process:
+            pid = 123
+
+            def __init__(self):
+                self.returncode = None
+                self.stdin = tempfile.TemporaryFile(mode="w+")
+                self.stdout = tempfile.TemporaryFile(mode="w+")
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                self.returncode = 0
+                return self.returncode
+
+        class Reader:
+            def join(self, timeout=None):
+                pass
+
+        app = codex_x_app._ManagedNativeApp.__new__(codex_x_app._ManagedNativeApp)
+        app.process = Process()
+        app.reader = Reader()
+        app.condition = threading.Condition()
+        app.cleanup = lambda: cleanups.append("stopped")
+        cleanups = []
+
+        def killpg(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
+
+        with patch("bridge.codex_x_app.os.killpg", side_effect=killpg):
+            app.close()
+
+        self.assertEqual(app.process.poll(), 0)
+        self.assertEqual(cleanups, ["stopped"])
+
+    def test_managed_app_retains_auth_home_when_process_stop_is_unverified(self):
+        class Process:
+            pid = 456
+
+            def __init__(self):
+                self.returncode = None
+                self.stdin = tempfile.TemporaryFile(mode="w+")
+                self.stdout = tempfile.TemporaryFile(mode="w+")
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                raise codex_x_app.subprocess.TimeoutExpired("fake-app-server", timeout)
+
+        class Reader:
+            def join(self, timeout=None):
+                pass
+
+        home = tempfile.TemporaryDirectory()
+        home_path = Path(home.name)
+        (home_path / "auth.json").write_text("{}", encoding="utf-8")
+        app = codex_x_app._ManagedNativeApp.__new__(codex_x_app._ManagedNativeApp)
+        app.process = Process()
+        app.reader = Reader()
+        app.condition = threading.Condition()
+        app.cleanup = home.cleanup
+        app._wait_process_group_stopped = lambda timeout=5: False
+
+        with patch("bridge.codex_x_app.os.killpg"):
+            with self.assertRaises(codex_x_app.subprocess.TimeoutExpired):
+                app.close()
+
+        self.assertFalse(app.stopped())
+        self.assertTrue((home_path / "auth.json").is_file())
+        del app
+        del home
+        self.assertTrue(home_path.is_dir())
+        (home_path / "auth.json").unlink()
+        home_path.rmdir()
 
     def test_create_thread_uses_native_provider_and_read_only_default(self):
         thread = {

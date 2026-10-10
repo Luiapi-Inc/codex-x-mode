@@ -1,4 +1,5 @@
 import atexit
+import errno
 import json
 import os
 import signal
@@ -9,7 +10,7 @@ from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 
-from .codex import ModelSelectionError, _model_catalog, _select_model
+from .codex import ModelSelectionError, _isolated_native_codex_env, _model_catalog, _select_model
 from .core import Fault
 
 
@@ -134,9 +135,11 @@ def _command(config, *parts):
 
 
 class _ManagedNativeApp:
-    def __init__(self, command, *, env, timeout=60):
+    def __init__(self, command, *, env, timeout=60, cleanup=None):
         self.command = tuple(command)
         self.default_timeout = max(10, float(timeout))
+        self.cleanup = cleanup
+        self.active_sessions = 0
         self.sequence = 0
         self.sequence_lock = threading.Lock()
         self.write_lock = threading.Lock()
@@ -220,9 +223,66 @@ class _ManagedNativeApp:
     def healthy(self):
         return not self.closed and self.process.poll() is None
 
+    def has_active_threads(self):
+        cursor = None
+        seen_cursors = set()
+        for _ in range(20):
+            params = {"limit": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            result = self.call("thread/list", params)
+            if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+                raise Fault(503, "Native Codex thread activity cannot be verified before profile replacement")
+            for thread in result["data"]:
+                if not isinstance(thread, dict):
+                    raise Fault(503, "Native Codex thread activity cannot be verified before profile replacement")
+                status = thread.get("status")
+                status_type = status.get("type") if isinstance(status, dict) else status
+                if status_type == "active":
+                    return True
+                if status_type != "idle":
+                    raise Fault(503, "Native Codex thread activity cannot be verified before profile replacement")
+            cursor = result.get("nextCursor")
+            if cursor is None:
+                return False
+            if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
+                raise Fault(503, "Native Codex thread activity cannot be verified before profile replacement")
+            seen_cursors.add(cursor)
+        raise Fault(503, "Native Codex thread activity exceeded the verification limit")
+
+    def stopped(self):
+        try:
+            return self.process.poll() is not None and self._wait_process_group_stopped(timeout=0)
+        except Exception:
+            return False
+
+    def _wait_process_group_stopped(self, timeout=5):
+        deadline = time.monotonic() + max(0, float(timeout))
+        while True:
+            try:
+                os.killpg(self.process.pid, 0)
+            except ProcessLookupError:
+                return True
+            except OSError as exc:
+                if exc.errno == errno.ESRCH:
+                    return True
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+
+    @staticmethod
+    def _retain_cleanup_home(cleanup):
+        # TemporaryDirectory's finalizer would otherwise delete auth.json if
+        # this app object is collected while its subprocess may still be live.
+        owner = getattr(cleanup, "__self__", None)
+        finalizer = getattr(owner, "_finalizer", None)
+        if finalizer is not None and finalizer.alive:
+            finalizer.detach()
+
     def close(self):
         if getattr(self, "process", None) is None:
-            return
+            return False
         try:
             if self.process.poll() is None:
                 os.killpg(self.process.pid, signal.SIGTERM)
@@ -242,20 +302,40 @@ class _ManagedNativeApp:
             with self.condition:
                 self.closed = True
                 self.condition.notify_all()
+            stopped = self.stopped()
+            if stopped and self.cleanup is not None:
+                cleanup, self.cleanup = self.cleanup, None
+                cleanup()
+            elif not stopped and self.cleanup is not None:
+                self._retain_cleanup_home(self.cleanup)
+        return stopped
 
 
 _MANAGED_LOCK = threading.RLock()
-_MANAGED_APP = None
-_MANAGED_COMMAND = None
+_MANAGED_APPS = {}
+
+
+def _web_auth_identity(config):
+    source_home = Path(
+        config.get("native_codex_home")
+        or os.environ.get("CODEX_HOME")
+        or (Path.home() / ".codex")
+    ).expanduser()
+    auth_source = source_home / "auth.json"
+    try:
+        stat = auth_source.stat()
+        if not auth_source.is_file():
+            raise OSError("Native Codex auth file is unavailable")
+    except OSError as exc:
+        raise Fault(503, "Native Codex ChatGPT authentication is unavailable") from exc
+    return (str(auth_source.resolve()), stat.st_ino, stat.st_mtime_ns, stat.st_size)
 
 
 def _shutdown_managed_app():
-    global _MANAGED_APP, _MANAGED_COMMAND
     with _MANAGED_LOCK:
-        app = _MANAGED_APP
-        _MANAGED_APP = None
-        _MANAGED_COMMAND = None
-    if app is not None:
+        apps = [entry[1] for entry in _MANAGED_APPS.values()]
+        _MANAGED_APPS.clear()
+    for app in apps:
         try:
             app.close()
         except Exception:
@@ -266,21 +346,38 @@ atexit.register(_shutdown_managed_app)
 
 
 def _managed_app(config, timeout=60):
-    global _MANAGED_APP, _MANAGED_COMMAND
     command = tuple(_command(config, "app-server", "--stdio"))
+    origin = "web" if config.get("_dispatch_origin") == "web" else "local"
+    identity = (command, _web_auth_identity(config)) if origin == "web" else (command,)
     with _MANAGED_LOCK:
-        if _MANAGED_APP is not None and (_MANAGED_COMMAND != command or not _MANAGED_APP.healthy()):
-            stale = _MANAGED_APP
-            _MANAGED_APP = None
-            _MANAGED_COMMAND = None
+        existing = _MANAGED_APPS.get(origin)
+        if existing is not None and existing[0] != identity:
+            current = existing[1]
+            if getattr(current, "active_sessions", 0) > 0:
+                raise Fault(409, "Cannot replace the Native Codex profile during an active App request")
+            if current.healthy() and current.has_active_threads():
+                raise Fault(409, "Cannot replace the Native Codex profile while a Native Codex turn is active")
+        if existing is not None and (existing[0] != identity or not existing[1].healthy()):
+            stale = existing[1]
             try:
-                stale.close()
-            except Exception:
-                pass
-        if _MANAGED_APP is None:
+                stopped = stale.close()
+            except Exception as exc:
+                stopped = stale.stopped()
+                if not stopped:
+                    raise Fault(503, "Previous Native Codex app-server stop cannot be verified") from exc
+            if not stopped:
+                raise Fault(503, "Previous Native Codex app-server stop cannot be verified")
+            _MANAGED_APPS.pop(origin, None)
+        if origin not in _MANAGED_APPS:
             app = None
+            cleanup = None
             try:
-                app = _ManagedNativeApp(command, env=_native_env(), timeout=timeout)
+                if origin == "web":
+                    env, cleanup = _isolated_native_codex_env(config)
+                else:
+                    env = _native_env()
+                app = _ManagedNativeApp(command, env=env, timeout=timeout, cleanup=cleanup)
+                cleanup = None
                 app.call("initialize", {"clientInfo": {"name": "codex_x_mode_codex_x_app", "title": "Codex X App", "version": "0.2.12"}}, timeout=max(10, timeout))
                 app.send({"method": "initialized", "params": {}})
             except Exception as exc:
@@ -288,30 +385,36 @@ def _managed_app(config, timeout=60):
                     app.close()
                 except Exception:
                     pass
+                if cleanup is not None:
+                    cleanup()
                 raise Fault(503, "Native Codex app-server is unavailable") from exc
-            _MANAGED_APP = app
-            _MANAGED_COMMAND = command
-        return _MANAGED_APP
+            _MANAGED_APPS[origin] = (identity, app)
+        return _MANAGED_APPS[origin][1]
 
 
 @contextmanager
 def _session(config, timeout=60):
-    app = _managed_app(config, timeout=timeout)
+    with _MANAGED_LOCK:
+        app = _managed_app(config, timeout=timeout)
+        app.active_sessions = getattr(app, "active_sessions", 0) + 1
     try:
         yield app
     except Fault:
         raise
     except Exception as exc:
-        with _MANAGED_LOCK:
-            global _MANAGED_APP, _MANAGED_COMMAND
-            if _MANAGED_APP is app:
-                _MANAGED_APP = None
-                _MANAGED_COMMAND = None
         try:
-            app.close()
+            stopped = app.close()
         except Exception:
-            pass
-        raise Fault(503, "Native Codex app-server operation failed") from exc
+            stopped = app.stopped()
+        if stopped:
+            with _MANAGED_LOCK:
+                for origin, entry in tuple(_MANAGED_APPS.items()):
+                    if entry[1] is app:
+                        _MANAGED_APPS.pop(origin, None)
+        raise Fault(503, "Native Codex app-server operation failed; no automatic replay") from exc
+    finally:
+        with _MANAGED_LOCK:
+            app.active_sessions = max(0, getattr(app, "active_sessions", 1) - 1)
 
 
 def _host(args):

@@ -32,6 +32,14 @@ Web-origin model discovery must expose exact `chatgpt-web/*` IDs from Native Cod
 
 Any reroute away from the selected exact model is an acceptance failure.
 
+### Web-originated Codex X App routing
+
+For HTTP/MCP Web-originated App calls, select the model from the current Native Codex `model/list` response and require a concrete `chatgpt-web/<version>` entry whose `id` exactly equals its executable `model` field. Send that exact ID on `thread/start` and `thread/fork`, then send both the exact ID and an effort supported by that entry on every `turn/start`. A family-only value such as `chatgpt-web` is not an executable model ID. A follow-up may steer an active turn only when its existing exact Web model and effort are verified; otherwise fail closed.
+
+Every Web-originated Codex X App app-server process must be separate from the local-stdio process and use a fresh temporary `CODEX_HOME` containing only the opaque Native Codex `auth.json` needed for the built-in ChatGPT route. Set owner-only permissions, remove competing provider credential/base-URL environment overrides, and do not inherit the operator's provider catalog or endpoint configuration. Recreate the Web process when its Native auth source changes only after proving there is no active App request or Native turn; unknown thread status blocks replacement. Remove the temporary home only after process-group termination is verified; if auth, isolation, active-turn state, or stop state is unknown, fail closed and retain the home until stop can be proven. Local stdio App calls continue using the operator's normal Native Codex profile.
+
+Catalog selection and sending explicit turn parameters do not prove entitlement or terminal execution identity. Keep requested, selected, and per-turn observed model evidence distinct; missing or mismatched terminal evidence leaves the operation unverified and never triggers a fallback model.
+
 ## Self-contained project boundary
 
 Codex X Mode runtime MUST NOT require another ChatGPT Plugin, external Tool, external Skill, or external MCP package as a product dependency.
